@@ -51,7 +51,9 @@ try {
 
   console.log('압축을 풉니다…');
   const members = Object.keys(FILES).map((f) => `${NAME}/${f}`);
-  const r = spawnSync('tar', ['-xjf', archive, '-C', work, ...members], { stdio: 'inherit' });
+  // Windows: Git의 GNU tar 대신 기본 tar.exe(bsdtar) 사용 (C:\ 경로 문제)
+  const tar = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+  const r = spawnSync(tar, ['-xjf', archive, '-C', work, ...members], { stdio: 'inherit' });
   if (r.status !== 0) throw new Error('압축 해제 실패 (tar)');
 
   mkdirSync(OUT, { recursive: true });
@@ -59,6 +61,7 @@ try {
   console.log('완료:', OUT);
 } catch (e) {
   console.error('✖', e.message);
+  if (process.env.GITHUB_ACTIONS) console.log(`::error title=model:download::${e.message}`);
   process.exitCode = 1;
 } finally {
   rmSync(work, { recursive: true, force: true });
