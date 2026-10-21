@@ -3,8 +3,10 @@ import {
   MAX_HISTORY_LINES,
   ROOM_TTL_MS,
   type CaptionLine,
+  type RelayState,
   type Role,
   type ServerMessage,
+  type ShareMessage,
 } from '@caption/shared';
 
 /** 방에 붙는 연결. ws.WebSocket을 그대로 넘겨도 되고 테스트에서는 가짜 객체를 쓴다. */
@@ -17,6 +19,8 @@ export class Room {
   ended = false;
 
   private readonly hosts = new Set<Peer>();
+  /** 중계 서버 상태와 참석자용 주소(복호화 키 포함). 송출자에게만 보낸다. */
+  private share: ShareMessage = { type: 'share', relay: 'off', relayViewerUrl: null };
   private readonly viewers = new Set<Peer>();
   private nextSeq = 1;
 
@@ -49,6 +53,7 @@ export class Room {
     if (role === 'host') this.lastHostSeenAt = Date.now();
 
     send(peer, { type: 'joined', role, code: this.code, ended: this.ended });
+    if (role === 'host') send(peer, this.share);
     send(peer, { type: 'history', lines: sinceSeq > 0 ? this.lines.filter((l) => l.seq > sinceSeq) : this.lines });
     if (this.ended) {
       send(peer, { type: 'sessionEnd' });
@@ -99,6 +104,12 @@ export class Room {
     this.ended = true;
     this.endedAt = Date.now();
     this.broadcast({ type: 'sessionEnd' }, true);
+  }
+
+  setShare(relay: RelayState, relayViewerUrl: string | null): void {
+    this.share = { type: 'share', relay, relayViewerUrl };
+    const data = JSON.stringify(this.share);
+    for (const h of this.hosts) h.send(data);
   }
 
   /** 송출자가 없거나 종료된 지 ROOM_TTL_MS가 지나면 만료 */

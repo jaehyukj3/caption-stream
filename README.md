@@ -22,6 +22,31 @@
 
 자세한 내용은 zip 안의 `README.txt`(사용법)에 있습니다.
 
+### 참석자 접속 방법 (자동 선택)
+| 상황 | QR이 가리키는 곳 | 조건 |
+|---|---|---|
+| 노트북이 인터넷에 연결됨 + 중계 서버 설정됨 | **인터넷(LTE) 주소** — 참석자는 와이파이 없이 접속 | 인원 제한 없음 |
+| 그 외 | **같은 와이파이** 주소 (강의장 와이파이 / Windows 핫스팟 192.168.137.x 우선) | 핫스팟은 최대 8명 |
+
+송출 화면의 "수신 안내"에서 직접 바꿀 수도 있습니다.
+
+**보안:** 음성은 노트북 안에서만 처리됩니다. 중계 서버에는 **노트북에서 암호화한 자막 텍스트만** 지나가며(AES-256-GCM),
+복호화 키는 QR 주소의 `#` 뒤에만 있어 서버로 전송되지 않습니다. 중계 서버는 내용을 읽을 수 없습니다.
+
+### 중계 서버 설정 (처음 한 번, 약 10분)
+와이파이 없이 LTE로 받으려면 필요합니다. Cloudflare 무료 플랜으로 충분합니다.
+
+1. https://dash.cloudflare.com/sign-up 에서 무료 가입
+2. 왼쪽 메뉴 **Workers & Pages**를 한 번 열어 workers.dev 하위 주소를 정합니다(처음 열 때 물어봄)
+3. **계정 ID** 복사: Workers & Pages 화면 오른쪽의 *Account ID*
+4. **API 토큰** 만들기: 오른쪽 위 프로필 → *My Profile* → *API Tokens* → *Create Token* →
+   **Edit Cloudflare Workers** 템플릿 → Account Resources에서 내 계정 선택 → *Continue* → *Create Token* → 토큰 복사
+5. GitHub 저장소 → *Settings* → *Secrets and variables* → *Actions* → *New repository secret*로 두 개 등록
+   - `CLOUDFLARE_API_TOKEN` = 4번 토큰
+   - `CLOUDFLARE_ACCOUNT_ID` = 3번 계정 ID
+6. 저장소 *Actions* → **Relay deploy** → *Run workflow*
+   → 중계 서버가 배포되고, 이어서 **Windows package**가 자동으로 다시 만들어집니다(중계 주소 포함). 그 zip을 쓰면 됩니다.
+
 ### 마이크
 - 송출 화면에서 마이크를 고를 수 있습니다 (USB 오디오 어댑터 등).
 - 입력 음량은 자동으로 맞춥니다 (앰프 출력처럼 큰 소리, 스피커 소리를 내장 마이크로 받는 작은 소리 모두).
@@ -37,7 +62,8 @@ npm run package:windows      # release/caption-stream-windows.zip (어느 OS에�
 ## 폴더 구조
 
 ```
-shared/   공통 타입과 WebSocket 메시지 프로토콜 (shared/src/index.ts)
+shared/   공통 타입, WebSocket 메시지 프로토콜, 종단간 암호화 (shared/src/index.ts, e2e.ts)
+relay/    중계 서버 (Cloudflare Workers + Durable Objects) — 암호문만 전달, 참석자 화면 제공
 server/   Node.js + ws. 방 관리, 브로드캐스트, interim 쓰로틀, 운영 시 정적 파일 서빙
 client/   Vue 3 + Vite
   src/components/caption/CaptionView.vue   ← 자막 표시 전용 (Electron 재사용 대상)

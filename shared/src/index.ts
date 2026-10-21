@@ -84,7 +84,20 @@ export interface ErrorMessage {
   message: string;
 }
 
+/**
+ * 송출자에게만: 참석자에게 보여줄 중계 주소 상태 (QR에 쓰임).
+ * relayViewerUrl에는 복호화 키(#k=...)가 들어 있으므로 송출자 외에는 보내지 않는다.
+ */
+export interface ShareMessage {
+  type: 'share';
+  relay: RelayState;
+  relayViewerUrl: string | null;
+}
+
+export type RelayState = 'off' | 'connecting' | 'online' | 'offline';
+
 export type ServerMessage =
+  | ShareMessage
   | JoinedMessage
   | HistoryMessage
   | InterimDownMessage
@@ -157,3 +170,25 @@ export interface SttStatusResponse {
   available: boolean;
   message?: string;
 }
+
+// ───────── 중계 서버 (와이파이 없이 LTE로 받기) ─────────
+// 노트북 ↔ 중계 서버 ↔ 참석자. 중계 서버는 암호문만 전달하며 내용을 볼 수 없다.
+// 참석자 → 노트북 메시지(join 등)도 암호화되어 노트북이 위 프로토콜 그대로 처리한다.
+
+export const RELAY_WS_PATH = '/relay';
+
+/** 노트북(송출 쪽) → 중계 */
+export type RelayUpMessage =
+  | { t: 'hello'; token: string }
+  | { t: 'broadcast'; data: string }
+  | { t: 'to'; id: string; data: string };
+
+/** 중계 → 노트북 */
+export type RelayDownMessage =
+  | { t: 'welcome' }
+  | { t: 'sub-join'; id: string }
+  | { t: 'sub-leave'; id: string }
+  | { t: 'sub-msg'; id: string; data: string }
+  | { t: 'denied'; reason: string };
+
+export * from './e2e.js';

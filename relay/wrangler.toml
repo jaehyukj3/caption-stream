@@ -1,0 +1,20 @@
+# 자막 중계 서버 (Cloudflare Workers, 무료 플랜으로 충분)
+# - /relay/<방ID> : 노트북(pub)과 참석자(sub) 사이에서 암호문만 전달하는 WebSocket
+# - 그 외 경로     : 참석자용 화면 (client 빌드 결과)
+name = "caption-relay"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+
+[assets]
+directory = "../client/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/relay/*"]
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayRoom"]

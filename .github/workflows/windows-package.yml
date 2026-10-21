@@ -23,6 +23,26 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test -w server
+      # 중계 서버 주소: 저장소 변수 RELAY_URL > Cloudflare 계정의 workers.dev 주소 > 없음(와이파이 전용)
+      - name: Resolve relay URL
+        shell: bash
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          RELAY_URL_VAR: ${{ vars.RELAY_URL }}
+        run: |
+          url="$RELAY_URL_VAR"
+          if [ -z "$url" ] && [ -n "$CF_TOKEN" ]; then
+            sub=$(curl -fsS -H "Authorization: Bearer $CF_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/workers/subdomain" \
+              | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{console.log(JSON.parse(d).result.subdomain||'')}catch{}})") || true
+            if [ -n "$sub" ]; then url="https://caption-relay.$sub.workers.dev"; fi
+          fi
+          if [ -n "$url" ]; then
+            echo "RELAY_URL=$url" >> "$GITHUB_ENV"
+            echo "::notice title=relay::중계 서버 $url"
+          else
+            echo "::notice title=relay::중계 서버 미설정 — 같은 와이파이 접속만 지원하는 패키지를 만듭니다"
+          fi
       - run: npm run package:windows
       - name: Smoke test (unzip like a user, start, decode audio)
         run: node scripts/smoke-test-package.mjs release/caption-stream-windows.zip

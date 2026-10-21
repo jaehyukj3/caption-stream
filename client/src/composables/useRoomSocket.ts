@@ -1,5 +1,15 @@
 import { onBeforeUnmount, ref, shallowRef } from 'vue';
-import { WS_PATH, type ClientMessage, type ErrorCode, type Role, type ServerMessage } from '@caption/shared';
+import {
+  e2eDecrypt,
+  e2eEncrypt,
+  importE2eKey,
+  RELAY_WS_PATH,
+  WS_PATH,
+  type ClientMessage,
+  type ErrorCode,
+  type Role,
+  type ServerMessage,
+} from '@caption/shared';
 
 export type SocketStatus = 'connecting' | 'live' | 'reconnecting' | 'failed' | 'closed';
 
@@ -10,7 +20,14 @@ export interface RoomSocketOptions {
   /** 재연결 시 이미 받은 마지막 seq (그 이후 문장만 다시 받음) */
   getSinceSeq: () => number;
   onMessage: (msg: ServerMessage) => void;
+  /**
+   * 중계 서버를 거쳐 접속 (와이파이 없이 LTE). 모든 메시지를 이 키로 암호화·복호화한다.
+   * 키는 주소의 # 뒤에서 오며 서버로 전송되지 않는다.
+   */
+  relay?: { rid: string; key: string };
 }
+
+const RELAY_PING_MS = 30_000;
 
 /** 재시도해도 소용없는 오류: 재연결을 멈춘다 */
 const FATAL: ErrorCode[] = ['ROOM_NOT_FOUND', 'NOT_HOST'];
@@ -33,7 +50,45 @@ export function useRoomSocket(opts: RoomSocketOptions) {
   let disposed = false;
   let queue: ClientMessage[] = [];
 
-  const url = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${WS_PATH}`;
+  const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url = () =>
+    opts.relay
+      ? `${wsProto}://${location.host}${RELAY_WS_PATH}/${opts.relay.rid}?role=sub`
+      : `${wsProto}://${location.host}${WS_PATH}`;
+
+  // 중계 모드: 암호화·복호화는 비동기라 순서가 섞이지 않도록 한 줄로 처리한다
+  const keyPromise = opts.relay ? importE2eKey(opts.relay.key) : null;
+  let outChain: Promise<void> = Promise.resolve();
+  let inChain: Promise<void> = Promise.resolve();
+  let pingTimer: ReturnType<typeof setInterval> | null = null;
+
+  function rawSend(sock: WebSocket, msg: ClientMessage) {
+    const text = JSON.stringify(msg);
+    if (!keyPromise) return sock.send(text);
+    outChain = outChain.then(async () => {
+      const sealed = await e2eEncrypt(await keyPromise, text);
+      if (sock.readyState === WebSocket.OPEN) sock.send(sealed);
+    });
+  }
+
+  function receive(data: string, handle: (msg: ServerMessage) => void) {
+    if (!keyPromise) {
+      try {
+        handle(JSON.parse(data));
+      } catch {
+        /* 잘못된 메시지 무시 */
+      }
+      return;
+    }
+    if (data === 'pong') return;
+    inChain = inChain.then(async () => {
+      try {
+        handle(JSON.parse(await e2eDecrypt(await keyPromise, data)));
+      } catch {
+        /* 키가 맞지 않거나 손상된 메시지 무시 */
+      }
+    });
+  }
 
   function connect() {
     if (disposed) return;
@@ -43,45 +98,27 @@ export function useRoomSocket(opts: RoomSocketOptions) {
     joined = false;
 
     sock.onopen = () => {
-      sock.send(
-        JSON.stringify({
-          type: 'join',
-          code: opts.code,
-          role: opts.role,
-          hostToken: opts.hostToken,
-          sinceSeq: opts.getSinceSeq(),
-        } satisfies ClientMessage),
-      );
+      rawSend(sock, {
+        type: 'join',
+        code: opts.code,
+        role: opts.role,
+        hostToken: opts.hostToken,
+        sinceSeq: opts.getSinceSeq(),
+      });
+      if (keyPromise) {
+        if (pingTimer) clearInterval(pingTimer);
+        pingTimer = setInterval(() => sock.readyState === WebSocket.OPEN && sock.send('ping'), RELAY_PING_MS);
+      }
     };
 
-    sock.onmessage = (ev) => {
-      let msg: ServerMessage;
-      try {
-        msg = JSON.parse(ev.data as string);
-      } catch {
-        return;
-      }
-      if (msg.type === 'joined') {
-        joined = true;
-        attempt = 0;
-        status.value = 'live';
-        error.value = null;
-        flushQueue();
-      } else if (msg.type === 'error') {
-        error.value = { code: msg.code, message: msg.message };
-        if (FATAL.includes(msg.code)) {
-          status.value = 'failed';
-          disposed = true;
-          sock.close();
-        }
-      }
-      opts.onMessage(msg);
-    };
+    sock.onmessage = (ev) => receive(ev.data as string, (msg) => onServerMessage(sock, msg));
 
     sock.onclose = () => {
       if (ws !== sock) return;
       ws = null;
       joined = false;
+      if (pingTimer) clearInterval(pingTimer);
+      pingTimer = null;
       if (disposed) {
         if (status.value !== 'failed') status.value = 'closed';
         return;
@@ -89,6 +126,24 @@ export function useRoomSocket(opts: RoomSocketOptions) {
       scheduleReconnect();
     };
     // onerror 뒤에는 항상 onclose가 오므로 따로 처리하지 않는다
+  }
+
+  function onServerMessage(sock: WebSocket, msg: ServerMessage) {
+    if (msg.type === 'joined') {
+      joined = true;
+      attempt = 0;
+      status.value = 'live';
+      error.value = null;
+      flushQueue();
+    } else if (msg.type === 'error') {
+      error.value = { code: msg.code, message: msg.message };
+      if (FATAL.includes(msg.code)) {
+        status.value = 'failed';
+        disposed = true;
+        sock.close();
+      }
+    }
+    opts.onMessage(msg);
   }
 
   function scheduleReconnect() {
@@ -113,7 +168,7 @@ export function useRoomSocket(opts: RoomSocketOptions) {
 
   function send(msg: ClientMessage) {
     if (ws && joined && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msg));
+      rawSend(ws, msg);
       return;
     }
     if (msg.type === 'final' || msg.type === 'end') {
@@ -125,7 +180,7 @@ export function useRoomSocket(opts: RoomSocketOptions) {
   function flushQueue() {
     const items = queue;
     queue = [];
-    for (const m of items) ws!.send(JSON.stringify(m));
+    for (const m of items) rawSend(ws!, m);
     syncPending();
   }
 
@@ -135,6 +190,7 @@ export function useRoomSocket(opts: RoomSocketOptions) {
 
   function close() {
     disposed = true;
+    if (pingTimer) clearInterval(pingTimer);
     if (retryTimer) clearTimeout(retryTimer);
     retryTimer = null;
     ws?.close();

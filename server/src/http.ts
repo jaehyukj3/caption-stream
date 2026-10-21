@@ -100,8 +100,16 @@ function lanAddresses(): string[] {
       if (addr.family === 'IPv4' && !addr.internal) result.push(addr.address);
     }
   }
-  // 사설망 대역을 앞으로 (192.168 > 10 > 172.16-31)
+  // Windows 모바일 핫스팟(192.168.137.x)을 맨 앞으로, 그다음 사설망 대역 (192.168 > 10 > 172.16-31)
   const rank = (ip: string) =>
-    ip.startsWith('192.168.') ? 0 : ip.startsWith('10.') ? 1 : /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ? 2 : 3;
+    ip.startsWith('192.168.137.')
+      ? 0
+      : ip.startsWith('192.168.')
+        ? 1
+        : ip.startsWith('10.')
+          ? 2
+          : /^172\.(1[6-9]|2\d|3[01])\./.test(ip)
+            ? 3
+            : 4;
   return result.sort((a, b) => rank(a) - rank(b));
 }

@@ -1,4 +1,6 @@
 import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { config } from './config.js';
+import { RelayBridge } from './relay/RelayBridge.js';
 import { Room } from './Room.js';
 
 const MAX_ROOMS = 1000;
@@ -6,6 +8,7 @@ const SWEEP_INTERVAL_MS = 60 * 1000;
 
 export class RoomManager {
   private readonly rooms = new Map<string, Room>();
+  private readonly bridges = new Map<string, RelayBridge>();
   private sweepTimer: NodeJS.Timeout | null = null;
 
   start(): void {
@@ -16,7 +19,9 @@ export class RoomManager {
   stop(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     for (const room of this.rooms.values()) room.dispose();
+    for (const b of this.bridges.values()) b.dispose();
     this.rooms.clear();
+    this.bridges.clear();
   }
 
   create(): Room | null {
@@ -31,6 +36,8 @@ export class RoomManager {
 
     const room = new Room(code, randomBytes(24).toString('base64url'));
     this.rooms.set(code, room);
+    // 중계 서버가 설정되어 있으면 LTE로도 받을 수 있게 연결 (인터넷이 없으면 계속 재시도)
+    if (config.relayUrl) this.bridges.set(code, new RelayBridge(config.relayUrl, room, this));
     console.log(`[room] created ${code} (total ${this.rooms.size})`);
     return room;
   }
@@ -50,6 +57,8 @@ export class RoomManager {
     for (const [code, room] of this.rooms) {
       if (room.isExpired(now)) {
         room.dispose();
+        this.bridges.get(code)?.dispose();
+        this.bridges.delete(code);
         this.rooms.delete(code);
         console.log(`[room] expired ${code}`);
       }

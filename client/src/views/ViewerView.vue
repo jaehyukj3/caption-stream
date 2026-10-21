@@ -12,6 +12,10 @@ import { downloadCaptions } from '../utils/download';
 const props = defineProps<{ code: string }>();
 
 const validCode = isValidRoomCode(props.code);
+// 중계 서버로 접속한 경우(QR 주소에 ?r=방ID#k=키): 키는 # 뒤라 서버로 전송되지 않는다
+const relayRid = new URLSearchParams(location.search).get('r');
+const relayKey = new URLSearchParams(location.hash.slice(1)).get('k');
+const relay = relayRid && relayKey ? { rid: relayRid, key: relayKey } : undefined;
 const store = createCaptionStore();
 const { prefs, biggerFont, smallerFont, toggleTheme } = usePreferences(22);
 const socket = validCode
@@ -20,6 +24,7 @@ const socket = validCode
       role: 'viewer',
       getSinceSeq: () => store.lastSeq.value,
       onMessage: store.apply,
+      relay,
     })
   : null;
 useWakeLock();
@@ -62,7 +67,13 @@ const statusDot = computed(() => {
     <main class="captions">
       <CaptionView :lines="store.state.lines" :interim="store.state.interim" :font-size="prefs.fontSize">
         <template #empty>
-          {{ socket?.status.value === 'live' ? '강사가 말을 시작하면 자막이 표시됩니다.' : '연결 중…' }}
+          {{
+            socket?.status.value === 'live'
+              ? '강사가 말을 시작하면 자막이 표시됩니다.'
+              : relay
+                ? '강사 노트북에 연결하는 중…'
+                : '연결 중…'
+          }}
         </template>
       </CaptionView>
     </main>

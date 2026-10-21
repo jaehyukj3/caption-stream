@@ -124,6 +124,11 @@ async function main() {
   rmSync(archive);
   rmSync(join(OUT_ROOT, folder), { recursive: true, force: true });
 
+  // 중계 서버 주소 (있으면 와이파이 없이 LTE로도 접속 가능). 나중에 app/config.json을 직접 고쳐도 된다.
+  const relayUrl = process.env.RELAY_URL?.trim() || null;
+  writeFileSync(join(APP, 'config.json'), JSON.stringify({ relayUrl }, null, 2));
+  console.log(relayUrl ? `  중계 서버: ${relayUrl}` : '  중계 서버 없음 (같은 와이파이 접속만)');
+
   step('실행 파일과 사용법');
   const crlf = (s) => s.replace(/\r?\n/g, '\r\n');
   // .bat은 영어만 쓴다 (코드페이지에 따라 한글이 깨질 수 있음). 한글 안내는 서버가 출력한다.

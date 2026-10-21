@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
-import { INTERIM_MIN_INTERVAL_MS } from '@caption/shared';
+import { INTERIM_MIN_INTERVAL_MS, type ShareMessage } from '@caption/shared';
 import { createCaptionStore } from '../../composables/useCaptionStore';
 import { useDictionary } from '../../composables/useDictionary';
 import { useMicLevel } from '../../composables/useMicLevel';
@@ -20,12 +20,17 @@ const props = defineProps<{ code: string; hostToken: string }>();
 const emit = defineEmits<{ newSession: []; invalid: [] }>();
 
 const store = createCaptionStore();
+/** 중계 서버 상태와 LTE 참석자용 주소 (서버가 송출자에게만 알려 줌) */
+const share = ref<ShareMessage | null>(null);
 const socket = useRoomSocket({
   code: props.code,
   role: 'host',
   hostToken: props.hostToken,
   getSinceSeq: () => store.lastSeq.value,
-  onMessage: store.apply,
+  onMessage: (msg) => {
+    if (msg.type === 'share') share.value = msg;
+    store.apply(msg);
+  },
 });
 const dict = useDictionary();
 const { prefs, biggerFont, smallerFont } = usePreferences(26);
@@ -210,7 +215,7 @@ onBeforeUnmount(() => {
         <button type="button" class="btn btn-primary" @click="emit('newSession')">새 세션 만들기</button>
       </div>
 
-      <SessionPanel :code="code" />
+      <SessionPanel :code="code" :share="share" />
 
       <div class="tools">
         <FloatingCaptionButton :source="pipSource" :font-size="prefs.fontSize" />
