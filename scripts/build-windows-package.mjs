@@ -15,9 +15,10 @@
 //       --target=linux-x64 로 이 OS에서 같은 구성을 시험해 볼 수 있다.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -44,6 +45,29 @@ const npmCli = () => {
   return [join(d, 'node_modules/npm/bin/npm-cli.js'), join(d, '../lib/node_modules/npm/bin/npm-cli.js')].find(existsSync);
 };
 const npm = (args, opts) => run(process.execPath, [npmCli(), ...args], { ...opts, shell: false });
+
+/**
+ * zip을 직접 만든다. OS 기본 도구(Windows tar 등)로 만든 zip은 Windows 탐색기·Expand-Archive에서
+ * 제대로 안 풀리는 경우가 있어, 표준 형식(슬래시 경로, UTF-8 파일명)으로 쓴다.
+ */
+async function writeZip(dir, zipPath) {
+  const yazl = require('yazl');
+  const zip = new yazl.ZipFile();
+  const top = basename(dir);
+  const walk = (abs, rel) => {
+    for (const name of readdirSync(abs)) {
+      const a = join(abs, name);
+      const r = `${rel}/${name}`;
+      const st = statSync(a);
+      if (st.isDirectory()) walk(a, r);
+      // 이미 압축된 모델·실행 파일도 deflate가 조금은 줄여 준다
+      else zip.addFile(a, r, { mode: st.mode, compress: true });
+    }
+  };
+  walk(dir, top);
+  zip.end();
+  await pipeline(zip.outputStream, createWriteStream(zipPath));
+}
 
 async function main() {
   rmSync(OUT_ROOT, { recursive: true, force: true });
@@ -126,8 +150,7 @@ async function main() {
 
   step('압축');
   rmSync(ZIP, { force: true });
-  if (process.platform === 'win32') run(TAR, ['-a', '-cf', ZIP, 'caption-stream'], { cwd: OUT_ROOT });
-  else run('zip', ['-qr', ZIP, 'caption-stream'], { cwd: OUT_ROOT });
+  await writeZip(PKG, ZIP);
   const mb = (readFileSync(ZIP).length / 1e6).toFixed(0);
   console.log(`\n✅ 완료: ${ZIP} (${mb}MB)`);
 }
