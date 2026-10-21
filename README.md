@@ -11,7 +11,8 @@
 
 ## 사용법 (Windows 노트북) — 설치 없이 더블클릭
 
-1. [Releases](../../releases)에서 **`caption-stream-windows.zip`** 을 받아 압축을 풉니다.
+1. **`caption-stream-windows.zip`** 을 받아 압축을 풉니다.
+   - [Releases](../../releases)에 올라온 것, 또는 [Actions → Windows package](../../actions/workflows/windows-package.yml)의 최신 성공 실행 → Artifacts
    (Node.js·음성 모델이 모두 들어 있어 **인터넷 없는 노트북에서도** 동작합니다. 관리자 권한 불필요)
 2. **`START.bat`** 더블클릭 → 크롬(또는 엣지)에 송출 화면이 자동으로 열립니다.
    - "Windows의 PC 보호" → [추가 정보] → [실행]
@@ -29,7 +30,8 @@
 ### 배포 패키지 만들기 (개발자)
 ```bash
 npm run package:windows      # release/caption-stream-windows.zip (어느 OS에서나 생성 가능)
-git tag v0.2.0 && git push origin v0.2.0   # GitHub Actions가 Windows에서 빌드·실행 검증 후 Releases에 업로드
+# GitHub Actions(Windows)에서 빌드·실행 검증: Actions 탭에서 수동 실행하거나,
+# 웹에서 릴리스를 Publish하면 검증된 zip이 그 릴리스에 자동으로 붙는다
 ```
 
 ## 폴더 구조
