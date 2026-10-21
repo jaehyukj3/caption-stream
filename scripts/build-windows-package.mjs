@@ -2,7 +2,7 @@
 //
 //   caption-stream/
 //     START.bat            ← 더블클릭
-//     사용법.txt
+//     README.txt           사용법 (파일명은 영문: zip 호환성)
 //     app/
 //       node.exe           Node.js 실행 파일 (설치·관리자 권한 불필요)
 //       server.mjs         서버 한 파일로 묶은 것
@@ -146,7 +146,7 @@ async function main() {
       { mode: 0o755 },
     );
   }
-  writeFileSync(join(PKG, '사용법.txt'), '﻿' + crlf(readFileSync(join(ROOT, 'scripts/package-readme.txt'), 'utf8')));
+  writeFileSync(join(PKG, 'README.txt'), '﻿' + crlf(readFileSync(join(ROOT, 'scripts/package-readme.txt'), 'utf8')));
 
   step('압축');
   rmSync(ZIP, { force: true });

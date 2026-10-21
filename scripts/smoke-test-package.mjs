@@ -1,10 +1,32 @@
 // 압축을 푼 배포 패키지를 실제로 켜서 확인한다 (GitHub Actions의 Windows에서 실행).
 // 1) 서버가 뜨는지  2) 음성인식 엔진이 올라왔는지  3) 오디오를 넣으면 엔진이 처리하는지
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const pkg = process.argv[2];
+function annotate(title, msg) {
+  console.error(`FAIL [${title}]`, msg);
+  if (process.env.GITHUB_ACTIONS) console.log(`::error title=${title}::${String(msg).replace(/\r?\n/g, '%0A')}`);
+}
+
+// 인자가 zip이면 사용자가 하듯 압축을 푼다 (Windows: 탐색기 '압축 풀기'와 같은 Expand-Archive)
+let pkg = process.argv[2];
+if (pkg.endsWith('.zip')) {
+  const dest = mkdtempSync(join(tmpdir(), 'smoke-'));
+  const r =
+    process.platform === 'win32'
+      ? spawnSync('powershell', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${pkg}' -DestinationPath '${dest}' -Force`], { encoding: 'utf8' })
+      : spawnSync('unzip', ['-q', pkg, '-d', dest], { encoding: 'utf8' });
+  if (r.status !== 0) {
+    annotate('unzip', `${r.stderr}${r.stdout}`);
+    process.exit(1);
+  }
+  pkg = join(dest, 'caption-stream');
+}
 const app = join(pkg, 'app');
+const listing = existsSync(pkg) ? `${readdirSync(pkg).join(', ')} | app: ${existsSync(app) ? readdirSync(app).join(', ') : '(없음)'}` : '(패키지 폴더 없음)';
+console.log('package contents:', listing);
 const exe = join(app, process.platform === 'win32' ? 'node.exe' : 'node');
 const server = spawn(exe, [join(app, 'server.mjs')], {
   cwd: app,
@@ -23,9 +45,8 @@ server.on('exit', (code) => {
   if (code !== null && code !== 0) fail(`server exited with code ${code}`);
 });
 function fail(m) {
-  const detail = `${m}\n--- server output ---\n${output.slice(-1500)}`;
-  console.error('FAIL', detail);
-  if (process.env.GITHUB_ACTIONS) console.log(`::error title=smoke test::${detail.replace(/\r?\n/g, '%0A')}`);
+  const detail = `${m}\n--- contents ---\n${listing}\n--- server output ---\n${output.slice(-1500)}`;
+  annotate('smoke test', detail);
   server.kill();
   process.exit(1);
 }

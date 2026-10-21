@@ -23,14 +23,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test -w server
       - run: npm run package:windows
-      - name: Smoke test (unzipped package)
-        shell: pwsh
-        run: |
-          try { Expand-Archive release/caption-stream-windows.zip -DestinationPath smoke -ErrorAction Stop }
-          catch { Write-Output "::error title=unzip::$($_.Exception.Message)"; exit 1 }
-          Get-ChildItem smoke/caption-stream, smoke/caption-stream/app | Select-Object FullName, Length | Format-Table -AutoSize
-          node scripts/smoke-test-package.mjs smoke/caption-stream
+      - name: Smoke test (unzip like a user, start, decode audio)
+        run: node scripts/smoke-test-package.mjs release/caption-stream-windows.zip
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: caption-stream-windows
           path: release/caption-stream-windows.zip
@@ -38,4 +34,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create ${{ github.ref_name }} release/caption-stream-windows.zip --title "${{ github.ref_name }}" --notes "압축을 풀고 START.bat 을 더블클릭하세요. 자세한 내용은 zip 안의 사용법.txt"
+        run: gh release create ${{ github.ref_name }} release/caption-stream-windows.zip --title "${{ github.ref_name }}" --notes "압축을 풀고 START.bat 을 더블클릭하세요. 자세한 내용은 zip 안의 README.txt"
