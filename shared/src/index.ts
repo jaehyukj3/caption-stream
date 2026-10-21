@@ -127,6 +127,13 @@ export interface NetInfoResponse {
   publicUrl: string | null;
   /** 서버 머신의 LAN IPv4 주소들 */
   lanAddresses: string[];
+  /**
+   * 같은 와이파이 참석자용 포트. null이면 지금 페이지와 같은 포트(서버가 처음부터 모든 주소에서 받는 경우).
+   * 노트북 실행에서는 방화벽 창을 피하려고 평소엔 노트북 안에서만 받다가, 필요할 때 이 포트를 연다.
+   */
+  lanPort: number | null;
+  /** 같은 와이파이 접속이 지금 열려 있는지 (닫혀 있으면 POST /api/lan 으로 연다) */
+  lanEnabled: boolean;
 }
 
 // ───────── 상수 ─────────

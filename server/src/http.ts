@@ -24,12 +24,31 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-export function createHttpHandler(rooms: RoomManager, staticDir: string | null) {
+/** 같은 와이파이 접속(외부 포트) 제어. index.ts가 만든다. */
+export interface LanControl {
+  readonly port: number | null;
+  readonly enabled: boolean;
+  enable(): Promise<void>;
+}
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const isLoopback = (req: IncomingMessage) => LOOPBACK.has(req.socket.remoteAddress ?? '');
+
+export function createHttpHandler(rooms: RoomManager, staticDir: string | null, lan: LanControl) {
+  const netInfo = (): NetInfoResponse => ({
+    publicUrl: process.env.PUBLIC_URL?.replace(/\/$/, '') || null,
+    lanAddresses: lanAddresses(),
+    lanPort: lan.port,
+    lanEnabled: lan.enabled,
+  });
+
   return (req: IncomingMessage, res: ServerResponse): void => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
 
     if (path === '/api/rooms' && req.method === 'POST') {
+      // 방 만들기는 강사 노트북에서만 (같은 와이파이 참석자가 방을 만들 수 없게)
+      if (lan.port !== null && !isLoopback(req)) return json(res, 403, { error: 'LOCAL_ONLY' });
       const room = rooms.create();
       if (!room) return json(res, 503, { error: 'TOO_MANY_ROOMS' });
       return json(res, 201, { code: room.code, hostToken: room.hostToken } satisfies CreateRoomResponse);
@@ -47,11 +66,15 @@ export function createHttpHandler(rooms: RoomManager, staticDir: string | null) 
       } satisfies RoomStatusResponse);
     }
 
-    if (path === '/api/net-info' && req.method === 'GET') {
-      return json(res, 200, {
-        publicUrl: process.env.PUBLIC_URL?.replace(/\/$/, '') || null,
-        lanAddresses: lanAddresses(),
-      } satisfies NetInfoResponse);
+    if (path === '/api/net-info' && req.method === 'GET') return json(res, 200, netInfo());
+
+    if (path === '/api/lan' && req.method === 'POST') {
+      if (!isLoopback(req)) return json(res, 403, { error: 'LOCAL_ONLY' });
+      lan.enable().then(
+        () => json(res, 200, netInfo()),
+        (e: Error) => json(res, 500, { error: 'LAN_FAILED', message: e.message }),
+      );
+      return;
     }
 
     if (path === '/api/stt-status' && req.method === 'GET') {

@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 
 /**
@@ -31,18 +30,14 @@ export function openBrowser(url: string): void {
 }
 
 export function printGuide(port: number): void {
-  const lan = Object.values(networkInterfaces())
-    .flat()
-    .filter((a) => a && a.family === 'IPv4' && !a.internal)
-    .map((a) => `http://${a!.address}:${port}`);
   const line = '─'.repeat(60);
   console.log(`\n${line}`);
   console.log('  ✅ 실시간 자막이 켜졌습니다.');
   console.log(`  송출 화면 : http://localhost:${port}/host  (자동으로 열립니다)`);
-  if (lan.length) console.log(`  참석자    : 송출 화면의 QR 코드 (같은 와이파이)  예) ${lan[0]}`);
+  console.log('  참석자    : 송출 화면의 QR 코드');
   console.log('');
   console.log('  ⚠ 이 창을 닫으면 자막이 꺼집니다. 강의 중에는 열어 두세요.');
-  console.log('  ⚠ "Windows 보안 경고"가 뜨면 [액세스 허용]을 눌러야 휴대폰에서 접속됩니다.');
+  console.log('  ⚠ "같은 와이파이" 접속을 고를 때 Windows 보안 경고가 뜨면 [액세스 허용]을 눌러 주세요.');
   console.log(`${line}\n`);
 }
 

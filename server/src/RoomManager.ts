@@ -37,7 +37,10 @@ export class RoomManager {
     const room = new Room(code, randomBytes(24).toString('base64url'));
     this.rooms.set(code, room);
     // 중계 서버가 설정되어 있으면 LTE로도 받을 수 있게 연결 (인터넷이 없으면 계속 재시도)
-    if (config.relayUrl) this.bridges.set(code, new RelayBridge(config.relayUrl, room, this));
+    if (config.relayUrl) {
+      room.setShare('connecting', null); // 송출 화면이 중계 연결을 기다리게 (와이파이 주소로 먼저 넘어가지 않게)
+      this.bridges.set(code, new RelayBridge(config.relayUrl, room, this));
+    }
     console.log(`[room] created ${code} (total ${this.rooms.size})`);
     return room;
   }
