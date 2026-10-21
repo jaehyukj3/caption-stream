@@ -1,0 +1,18 @@
+{
+  "name": "caption-stream",
+  "private": true,
+  "version": "0.1.0",
+  "engines": { "node": ">=20" },
+  "workspaces": ["shared", "server", "client"],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
+    "dev:https": "concurrently -k -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev:https -w client\"",
+    "build": "npm run build -w client",
+    "start": "npm run start -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0",
+    "typescript": "~5.9.3"
+  }
+}

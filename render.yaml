@@ -1,0 +1,14 @@
+# Render Blueprint: 저장소를 연결하면 이 설정대로 웹 서비스가 만들어진다.
+services:
+  - type: web
+    name: caption-stream
+    runtime: node
+    region: singapore        # 한국과 가장 가까운 리전
+    plan: free               # 실제 강의용은 starter(잠들지 않음) 권장
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

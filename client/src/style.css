@@ -1,0 +1,173 @@
+:root,
+:root[data-theme='dark'] {
+  --bg: #0f1215;
+  --surface: #181c21;
+  --surface-2: #222830;
+  --border: #2d343d;
+  --text: #eef1f4;
+  --muted: #9aa4b0;
+  --accent: #ffd54a;
+  --accent-text: #15181c;
+  --danger: #ff6b6b;
+  --ok: #4cd18a;
+  --warn: #ffb547;
+
+  --cap-text: #f5f7fa;
+  --cap-muted-text: #b9c1cb;
+  --cap-interim: #6f7a87;
+  --cap-accent: var(--accent);
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #eceef1;
+  --border: #d9dde2;
+  --text: #15181c;
+  --muted: #5d6773;
+  --accent: #f2b600;
+  --accent-text: #15181c;
+  --danger: #d93838;
+  --ok: #1d9a5b;
+  --warn: #b86e00;
+
+  --cap-text: #101317;
+  --cap-muted-text: #3f4852;
+  --cap-interim: #98a1ab;
+  --cap-accent: #e0a800;
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+#app {
+  height: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.btn-danger {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn-icon {
+  min-width: 40px;
+  padding: 0 10px;
+}
+
+input[type='text'] {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* iOS 확대 방지 */
+  min-width: 0;
+}
+input[type='text']:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.notice {
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.notice.is-error {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.dot.is-live {
+  background: var(--ok);
+}
+.dot.is-wait {
+  background: var(--warn);
+}
+.dot.is-off {
+  background: var(--danger);
+}
