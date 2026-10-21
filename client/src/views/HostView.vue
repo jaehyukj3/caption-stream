@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import type { CreateRoomResponse, SttStatusResponse } from '@caption/shared';
 import HostConsole from '../components/host/HostConsole.vue';
+import WebHostConsole from '../components/host/WebHostConsole.vue';
 import { usePreferences } from '../composables/usePreferences';
 import { createSttProvider, sttKindFromUrl } from '../stt';
 import { readJson, writeJson } from '../utils/storage';
@@ -14,14 +15,36 @@ const session = ref<CreateRoomResponse | null>(null);
 const checking = ref(true);
 const creating = ref(false);
 const error = ref('');
+/**
+ * 송출 방식
+ *  - laptop: 노트북 프로그램(START.bat)이 띄운 화면. 노트북 안에서 음성인식(음성 외부 전송 없음)
+ *  - web:    노트북 프로그램 없이 웹 주소로 접속. 브라우저 내장 음성인식(테스트용)
+ */
+const mode = ref<'laptop' | 'web' | null>(null);
+const webSession = ref(0);
 const sttKind = sttKindFromUrl();
-const sttSupported = createSttProvider(sttKind).isSupported;
+const sttSupported = computed(() => createSttProvider(mode.value === 'web' ? 'webspeech' : sttKind).isSupported);
 const secure = window.isSecureContext;
 /** 로컬 음성인식은 이 노트북에서 localhost로 연 화면에서만 동작한다 */
 const isLocalhost = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 const sttStatus = ref<SttStatusResponse | null>(null);
 
+/** 노트북 프로그램이 있으면 /api/health가 JSON으로 답한다 (중계 사이트는 화면 파일만 준다) */
+async function detectMode(): Promise<'laptop' | 'web'> {
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store' });
+    return res.ok && res.headers.get('content-type')?.includes('json') ? 'laptop' : 'web';
+  } catch {
+    return 'web';
+  }
+}
+
 onMounted(async () => {
+  mode.value = await detectMode();
+  if (mode.value === 'web') {
+    checking.value = false;
+    return;
+  }
   if (sttKind === 'local') {
     sttStatus.value = await fetch('/api/stt-status')
       .then((r) => r.json() as Promise<SttStatusResponse>)
@@ -38,6 +61,10 @@ onMounted(async () => {
 });
 
 async function createSession() {
+  if (mode.value === 'web') {
+    webSession.value++;
+    return;
+  }
   creating.value = true;
   error.value = '';
   try {
@@ -56,6 +83,7 @@ async function createSession() {
 function resetSession() {
   writeJson(sessionStorage, KEY, null);
   session.value = null;
+  webSession.value = 0;
 }
 
 function onInvalid() {
@@ -82,6 +110,21 @@ function onInvalid() {
       @new-session="resetSession"
       @invalid="onInvalid"
     />
+
+    <WebHostConsole v-else-if="mode === 'web' && webSession" :key="webSession" class="body" @new-session="resetSession" />
+
+    <main v-else-if="!checking && mode === 'web'" class="start">
+      <div class="card start-card">
+        <h1>웹에서 바로 송출</h1>
+        <p class="muted">프로그램 설치 없이 이 브라우저(PC·휴대폰)에서 송출합니다. 참석자는 QR을 찍어 자막을 봅니다.</p>
+        <p class="notice">
+          <b>테스트용입니다.</b> 브라우저 내장 음성인식을 써서 음성이 구글·애플 서버로 전송됩니다. 이 화면을 닫거나 휴대폰 화면이 꺼지면 자막이 멈춥니다.
+          음성이 밖으로 나가면 안 되는 강의는 노트북 프로그램을 쓰세요.
+        </p>
+        <p v-if="!sttSupported" class="notice is-error">이 브라우저는 음성인식을 지원하지 않습니다. 안드로이드·PC는 크롬, 아이폰은 사파리를 사용해 주세요.</p>
+        <button type="button" class="btn btn-primary big" :disabled="!sttSupported" @click="createSession">세션 만들기</button>
+      </div>
+    </main>
 
     <main v-else-if="!checking" class="start">
       <div class="card start-card">

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ROOM_TTL_MS, type ServerMessage } from '@caption/shared';
-import { Room } from '../src/Room.js';
+import { Room, ROOM_TTL_MS, type ServerMessage } from '@caption/shared';
 
 class FakePeer {
   received: ServerMessage[] = [];

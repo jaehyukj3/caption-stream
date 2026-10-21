@@ -22,7 +22,7 @@ function join() {
       <input id="code" v-model="code" type="text" inputmode="numeric" autocomplete="off" maxlength="7" placeholder="123 456" />
       <button type="submit" class="btn btn-primary" :disabled="!isValidRoomCode(normalized)">자막 보기</button>
     </form>
-    <RouterLink to="/host" class="muted host-link">강사이신가요? 송출 화면으로 →</RouterLink>
+    <RouterLink to="/host" class="muted host-link">강사이신가요? 송출하기 →</RouterLink>
   </main>
 </template>
 

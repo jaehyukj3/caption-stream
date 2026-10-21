@@ -7,7 +7,7 @@ import {
   type Role,
   type ServerMessage,
   type ShareMessage,
-} from '@caption/shared';
+} from './protocol.js';
 
 /** 방에 붙는 연결. ws.WebSocket을 그대로 넘겨도 되고 테스트에서는 가짜 객체를 쓴다. */
 export interface Peer {
@@ -33,7 +33,7 @@ export class Room {
   private pendingInterim: string | null = null;
   /** 마지막으로 내보낸 중간 결과. 늦게 들어온 수신자에게 바로 보여준다. */
   private currentInterim = '';
-  private interimTimer: NodeJS.Timeout | null = null;
+  private interimTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     readonly code: string,

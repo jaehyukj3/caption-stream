@@ -1,12 +1,11 @@
 import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
-import { RelayBridge } from './relay/RelayBridge.js';
-import { Room } from './Room.js';
+import { RelayBridge, Room, type RoomDirectory } from '@caption/shared';
 
 const MAX_ROOMS = 1000;
 const SWEEP_INTERVAL_MS = 60 * 1000;
 
-export class RoomManager {
+export class RoomManager implements RoomDirectory {
   private readonly rooms = new Map<string, Room>();
   private readonly bridges = new Map<string, RelayBridge>();
   private sweepTimer: NodeJS.Timeout | null = null;

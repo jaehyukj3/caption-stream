@@ -1,18 +1,7 @@
-import WebSocket from 'ws';
-import {
-  e2eDecrypt,
-  e2eEncrypt,
-  generateE2eKey,
-  importE2eKey,
-  randomId,
-  RELAY_WS_PATH,
-  type E2eKey,
-  type RelayDownMessage,
-  type RelayUpMessage,
-} from '@caption/shared';
-import type { Room } from '../Room.js';
-import type { RoomManager } from '../RoomManager.js';
-import { openConnection, type Connection } from '../socket.js';
+import { openConnection, type Connection, type RoomDirectory } from './connection.js';
+import { e2eDecrypt, e2eEncrypt, generateE2eKey, importE2eKey, randomId, type E2eKey } from './e2e.js';
+import { RELAY_WS_PATH, type RelayDownMessage, type RelayUpMessage } from './protocol.js';
+import type { Room } from './room.js';
 
 const PING_INTERVAL_MS = 30_000;
 const MAX_BACKOFF_MS = 30_000;
@@ -38,8 +27,8 @@ export class RelayBridge {
   private ws: WebSocket | null = null;
   private readonly viewers = new Map<string, RemoteViewer>();
   private attempt = 0;
-  private retryTimer: NodeJS.Timeout | null = null;
-  private pingTimer: NodeJS.Timeout | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
 
   /** 같은 순간에 나간 메시지를 모아 같은 내용은 한 번만 암호화·전송 (broadcast) */
@@ -50,7 +39,7 @@ export class RelayBridge {
   constructor(
     private readonly relayUrl: string,
     private readonly room: Room,
-    private readonly rooms: RoomManager,
+    private readonly rooms: RoomDirectory,
   ) {
     void importE2eKey(this.keyB64).then((k) => {
       this.key = k;
@@ -75,21 +64,29 @@ export class RelayBridge {
     if (this.disposed) return;
     this.room.setShare('connecting', null);
     const url = `${this.relayUrl.replace(/^http/, 'ws')}${RELAY_WS_PATH}/${this.rid}?role=pub`;
-    const ws = new WebSocket(url, { handshakeTimeout: 10_000 });
+    // 브라우저와 Node.js(22+) 모두에 있는 표준 WebSocket
+    const ws = new WebSocket(url);
     this.ws = ws;
+    // 응답 없는 연결은 10초 뒤 포기하고 다시 시도
+    const handshakeTimer = setTimeout(() => ws.readyState === WebSocket.CONNECTING && ws.close(), 10_000);
 
-    ws.on('open', () => this.up({ t: 'hello', token: this.token }));
-    ws.on('message', (raw) => {
-      if (String(raw) === 'pong') return;
+    ws.onopen = () => {
+      clearTimeout(handshakeTimer);
+      this.up({ t: 'hello', token: this.token });
+    };
+    ws.onmessage = (ev) => {
+      const raw = String(ev.data);
+      if (raw === 'pong') return;
       let msg: RelayDownMessage;
       try {
-        msg = JSON.parse(String(raw));
+        msg = JSON.parse(raw);
       } catch {
         return;
       }
       this.onRelayMessage(msg);
-    });
-    ws.on('close', () => {
+    };
+    ws.onclose = () => {
+      clearTimeout(handshakeTimer);
       if (this.ws !== ws) return;
       this.ws = null;
       if (this.pingTimer) clearInterval(this.pingTimer);
@@ -98,10 +95,10 @@ export class RelayBridge {
       this.room.setShare('offline', null);
       const delay = Math.min(1000 * 2 ** this.attempt++, MAX_BACKOFF_MS);
       this.retryTimer = setTimeout(() => this.connect(), delay);
-    });
-    ws.on('error', (e) => {
-      if (this.attempt === 0) console.warn(`[relay] 중계 서버 연결 실패: ${e.message} (인터넷 연결 확인)`);
-    });
+    };
+    ws.onerror = () => {
+      if (this.attempt === 0) console.warn('[relay] 중계 서버에 연결하지 못했습니다 (인터넷 연결 확인)');
+    };
   }
 
   private onRelayMessage(msg: RelayDownMessage) {
@@ -109,6 +106,7 @@ export class RelayBridge {
       case 'welcome':
         this.attempt = 0;
         this.room.setShare('online', this.viewerUrl);
+        if (this.pingTimer) clearInterval(this.pingTimer);
         this.pingTimer = setInterval(() => this.ws?.readyState === WebSocket.OPEN && this.ws.send('ping'), PING_INTERVAL_MS);
         console.log(`[relay] 방 ${this.room.code} 중계 연결됨`);
         break;
