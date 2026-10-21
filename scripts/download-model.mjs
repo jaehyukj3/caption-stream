@@ -2,7 +2,7 @@
 // 원본 압축 파일(약 420MB)에서 실제로 쓰는 int8 모델 파일(약 140MB)만 꺼낸다.
 // Windows 10 이상, macOS, Linux에 기본으로 있는 tar로 압축을 푼다.
 import { spawnSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -57,7 +57,8 @@ try {
   if (r.status !== 0) throw new Error('압축 해제 실패 (tar)');
 
   mkdirSync(OUT, { recursive: true });
-  for (const [src, dst] of Object.entries(FILES)) renameSync(join(work, NAME, src), join(OUT, dst));
+  // 임시 폴더와 대상이 다른 드라이브일 수 있어(C: → D:) rename 대신 복사한다
+  for (const [src, dst] of Object.entries(FILES)) copyFileSync(join(work, NAME, src), join(OUT, dst));
   console.log('완료:', OUT);
 } catch (e) {
   console.error('✖', e.message);
