@@ -9,13 +9,26 @@ const exe = join(app, process.platform === 'win32' ? 'node.exe' : 'node');
 const server = spawn(exe, [join(app, 'server.mjs')], {
   cwd: app,
   env: { ...process.env, PORT: '3001', STATIC_DIR: join(app, 'public'), STT_MODEL_DIR: join(app, 'models/ko-streaming') },
-  stdio: 'inherit',
+  stdio: ['ignore', 'pipe', 'pipe'],
 });
-const fail = (m) => {
-  console.error('FAIL', m);
+// 실패 시 원인을 보이도록 서버 출력을 모아 둔다
+let output = '';
+for (const s of [server.stdout, server.stderr]) {
+  s.on('data', (d) => {
+    output += d;
+    process.stdout.write(d);
+  });
+}
+server.on('exit', (code) => {
+  if (code !== null && code !== 0) fail(`server exited with code ${code}`);
+});
+function fail(m) {
+  const detail = `${m}\n--- server output ---\n${output.slice(-1500)}`;
+  console.error('FAIL', detail);
+  if (process.env.GITHUB_ACTIONS) console.log(`::error title=smoke test::${detail.replace(/\r?\n/g, '%0A')}`);
   server.kill();
   process.exit(1);
-};
+}
 
 let ok = false;
 for (let i = 0; i < 60 && !ok; i++) {
