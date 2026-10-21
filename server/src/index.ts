@@ -7,7 +7,7 @@ import { createHttpHandler } from './http.js';
 import { RoomManager } from './RoomManager.js';
 import { createRoomWebSocketServer } from './socket.js';
 import { desktopMode, isAlreadyRunning, openBrowser, printGuide } from './desktop.js';
-import { loadSttEngine, sttStatus } from './stt/SttEngine.js';
+import { loadSttEngine, stopSttEngine, sttStatus } from './stt/SttEngine.js';
 import { createSttWebSocketServer } from './stt/sttSocket.js';
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -52,7 +52,6 @@ server.on('error', async (e: NodeJS.ErrnoException) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`[server] http://${HOST}:${PORT}  (ws: ${WS_PATH})`);
-  console.log(`[stt] ${sttStatus().available ? '로컬 음성인식 준비됨' : '로컬 음성인식 사용 불가'}`);
   console.log(staticDir ? `[server] serving client from ${staticDir}` : '[server] API only (client는 Vite dev 서버 사용)');
   if (desktopMode) {
     printGuide(PORT);
@@ -64,6 +63,7 @@ function shutdown(): void {
   rooms.stop();
   wss.close();
   sttWss.close();
+  stopSttEngine();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2000).unref();
 }

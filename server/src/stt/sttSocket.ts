@@ -33,6 +33,11 @@ export function createSttWebSocketServer(): WebSocketServer {
       ws.close();
       return;
     }
+    if (!sttStatus().available) {
+      send({ type: 'error', code: 'ENGINE_ERROR', message: sttStatus().message! });
+      ws.close();
+      return;
+    }
 
     const session = new SttSession(
       (text) => send({ type: 'interim', text }),
@@ -40,25 +45,22 @@ export function createSttWebSocketServer(): WebSocketServer {
     );
     send({ type: 'ready' });
 
-    ws.on('message', (data, isBinary) => {
+    ws.on('message', async (data, isBinary) => {
+      if (isBinary) {
+        session.acceptPcm16(data as Buffer);
+        return;
+      }
       try {
-        if (isBinary) {
-          const buf = data as Buffer;
-          // Int16 정렬 보장을 위해 복사 (Buffer 오프셋이 홀수일 수 있음)
-          const pcm = new Int16Array(buf.byteLength >> 1);
-          for (let i = 0; i < pcm.length; i++) pcm[i] = buf.readInt16LE(i * 2);
-          session.acceptPcm16(pcm);
-          return;
-        }
         const msg = JSON.parse(data.toString()) as { type?: string };
         if (msg.type === 'flush') {
-          session.flush();
+          await session.flush();
           send({ type: 'flushed' });
         }
-      } catch (e) {
-        send({ type: 'error', code: 'ENGINE_ERROR', message: `음성인식 오류: ${(e as Error).message}` });
+      } catch {
+        /* 잘못된 메시지 무시 */
       }
     });
+    ws.on('close', () => session.close());
   });
 
   return wss;

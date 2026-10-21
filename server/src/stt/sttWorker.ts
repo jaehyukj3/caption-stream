@@ -1,0 +1,239 @@
+/**
+ * 음성인식 작업 스레드. 인식(수백 ms)이 서버의 자막 중계를 막지 않도록 따로 돈다.
+ *
+ * 방식: Silero VAD가 말하는 구간을 찾고, SenseVoice가 그 구간을 받아 적는다.
+ *  - 말하는 중: 지금까지의 구간을 주기적으로 다시 인식해 중간 결과(interim)로 보낸다
+ *  - 말이 끝나면(짧은 쉼): 그 구간 전체를 인식해 확정(final)으로 보낸다
+ * 스트리밍 모델보다 느리지만 훨씬 정확하다 (잔향·잡음이 있는 강의실 음성에서 특히).
+ */
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+import { parentPort, workerData } from 'node:worker_threads';
+
+const SAMPLE_RATE = 16000;
+const VAD_WINDOW = 512;
+/** 말 시작 직전 소리도 포함 (첫 음절 잘림 방지) */
+const PREROLL_SAMPLES = SAMPLE_RATE * 0.3;
+/** 이보다 짧은 말소리 구간은 중간 결과를 내지 않는다 */
+const MIN_INTERIM_SAMPLES = SAMPLE_RATE * 0.5;
+const MIN_INTERIM_INTERVAL_MS = 700;
+
+export type WorkerIn =
+  | { op: 'open'; id: number }
+  | { op: 'audio'; id: number; pcm: ArrayBuffer }
+  | { op: 'flush'; id: number }
+  | { op: 'close'; id: number };
+
+export type WorkerOut =
+  | { op: 'ready' }
+  | { op: 'error'; message: string }
+  | { op: 'result'; id: number; kind: 'interim' | 'final'; text: string }
+  | { op: 'flushed'; id: number };
+
+interface Sherpa {
+  OfflineRecognizer: new (config: unknown) => OfflineRecognizer;
+  Vad: new (config: unknown, bufferSeconds: number) => Vad;
+}
+interface OfflineStream {
+  acceptWaveform(w: { samples: Float32Array; sampleRate: number }): void;
+}
+interface OfflineRecognizer {
+  createStream(): OfflineStream;
+  decode(s: OfflineStream): void;
+  getResult(s: OfflineStream): { text: string };
+}
+interface Vad {
+  acceptWaveform(samples: Float32Array): void;
+  isEmpty(): boolean;
+  isDetected(): boolean;
+  front(enableExternalBuffer?: boolean): { start: number; samples: Float32Array };
+  pop(): void;
+  flush(): void;
+  reset(): void;
+}
+
+const port = parentPort!;
+const modelDir: string = workerData.modelDir;
+const post = (m: WorkerOut) => port.postMessage(m);
+
+let recognizer: OfflineRecognizer;
+let sherpa: Sherpa;
+let vadConfig: unknown;
+
+try {
+  sherpa = createRequire(import.meta.url)('sherpa-onnx-node') as Sherpa;
+  recognizer = new sherpa.OfflineRecognizer({
+    featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
+    modelConfig: {
+      senseVoice: { model: join(modelDir, 'model.int8.onnx'), language: 'ko', useInverseTextNormalization: 1 },
+      tokens: join(modelDir, 'tokens.txt'),
+      numThreads: 2,
+      provider: 'cpu',
+      debug: 0,
+    },
+  });
+  vadConfig = {
+    sileroVad: {
+      model: join(modelDir, 'silero_vad.onnx'),
+      threshold: 0.5,
+      minSilenceDuration: 0.5, // 0.5초 쉬면 문장 확정
+      minSpeechDuration: 0.25,
+      maxSpeechDuration: 12, // 쉬지 않고 말해도 12초마다 끊어서 확정
+      windowSize: VAD_WINDOW,
+    },
+    sampleRate: SAMPLE_RATE,
+    numThreads: 1,
+    provider: 'cpu',
+    debug: 0,
+  };
+  post({ op: 'ready' });
+} catch (e) {
+  post({ op: 'error', message: (e as Error).message });
+}
+
+function transcribe(samples: Float32Array): string {
+  const s = recognizer.createStream();
+  s.acceptWaveform({ samples, sampleRate: SAMPLE_RATE });
+  recognizer.decode(s);
+  return cleanText(recognizer.getResult(s).text);
+}
+
+/** 겹친 공백만 정리한다 (음절 반복 같은 오인식은 바르게 쓰인 문장까지 망칠 수 있어 고치지 않는다) */
+function cleanText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function concat(parts: Float32Array[]): Float32Array {
+  const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+class Session {
+  private readonly vad = new sherpa.Vad(vadConfig, 30);
+  /** VAD 창(512) 단위로 넣고 남은 조각 */
+  private pending = new Float32Array(0);
+  /** 최근 소리 (말 시작 직전 부분) */
+  private preroll: Float32Array[] = [];
+  private prerollLen = 0;
+  /** 지금 말하는 중인 구간 (중간 결과용) */
+  private speech: Float32Array[] = [];
+  private speechLen = 0;
+  private speaking = false;
+  private lastInterim = '';
+  private lastInterimAt = 0;
+  private lastDecodeMs = 0;
+
+  // 작업 스레드는 Node 자체의 타입 제거 방식으로 실행될 수 있어 파라미터 프로퍼티 문법을 쓰지 않는다
+  private readonly id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+
+  accept(samples: Float32Array) {
+    let buf = this.pending.length ? concat([this.pending, samples]) : samples;
+    let o = 0;
+    for (; o + VAD_WINDOW <= buf.length; o += VAD_WINDOW) this.vad.acceptWaveform(buf.subarray(o, o + VAD_WINDOW));
+    this.pending = buf.slice(o);
+
+    const detected = this.vad.isDetected();
+    if (detected && !this.speaking) {
+      this.speech = [...this.preroll];
+      this.speechLen = this.prerollLen;
+    }
+    if (detected) {
+      this.speech.push(samples);
+      this.speechLen += samples.length;
+    }
+    this.speaking = detected;
+    this.remember(samples);
+
+    this.drainFinals();
+    if (this.speaking) this.maybeInterim();
+  }
+
+  flush() {
+    this.vad.flush();
+    const hadSegment = !this.vad.isEmpty();
+    this.drainFinals();
+    // VAD가 아직 구간으로 확정하지 않은 말소리가 남아 있으면 그대로 확정
+    if (!hadSegment && this.speechLen > MIN_INTERIM_SAMPLES) this.emitFinal(transcribe(concat(this.speech)));
+    this.vad.reset();
+    this.resetSpeech();
+    this.speaking = false;
+    this.pending = new Float32Array(0);
+    post({ op: 'flushed', id: this.id });
+  }
+
+  private drainFinals() {
+    while (!this.vad.isEmpty()) {
+      const seg = this.vad.front(false);
+      this.vad.pop();
+      this.emitFinal(transcribe(seg.samples));
+      this.resetSpeech();
+    }
+  }
+
+  private maybeInterim() {
+    const now = Date.now();
+    const interval = Math.max(MIN_INTERIM_INTERVAL_MS, this.lastDecodeMs * 2);
+    if (this.speechLen < MIN_INTERIM_SAMPLES || now - this.lastInterimAt < interval) return;
+    const t0 = Date.now();
+    const text = transcribe(concat(this.speech));
+    this.lastDecodeMs = Date.now() - t0;
+    this.lastInterimAt = Date.now();
+    if (text && text !== this.lastInterim) {
+      this.lastInterim = text;
+      post({ op: 'result', id: this.id, kind: 'interim', text });
+    }
+  }
+
+  private emitFinal(text: string) {
+    this.lastInterim = '';
+    if (text) post({ op: 'result', id: this.id, kind: 'final', text });
+  }
+
+  private resetSpeech() {
+    this.speech = [];
+    this.speechLen = 0;
+    this.lastInterimAt = 0;
+  }
+
+  private remember(samples: Float32Array) {
+    this.preroll.push(samples);
+    this.prerollLen += samples.length;
+    while (this.prerollLen - this.preroll[0]!.length >= PREROLL_SAMPLES) this.prerollLen -= this.preroll.shift()!.length;
+  }
+}
+
+const sessions = new Map<number, Session>();
+
+port.on('message', (m: WorkerIn) => {
+  if (!recognizer) return;
+  try {
+    switch (m.op) {
+      case 'open':
+        sessions.set(m.id, new Session(m.id));
+        break;
+      case 'audio': {
+        const pcm = new Int16Array(m.pcm);
+        const f = new Float32Array(pcm.length);
+        for (let i = 0; i < pcm.length; i++) f[i] = pcm[i]! / 32768;
+        sessions.get(m.id)?.accept(f);
+        break;
+      }
+      case 'flush':
+        sessions.get(m.id)?.flush() ?? post({ op: 'flushed', id: m.id });
+        break;
+      case 'close':
+        sessions.delete(m.id);
+        break;
+    }
+  } catch (e) {
+    post({ op: 'error', message: (e as Error).message });
+  }
+});

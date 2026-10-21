@@ -7,7 +7,8 @@
 //       node.exe           Node.js 실행 파일 (설치·관리자 권한 불필요)
 //       server.mjs         서버 한 파일로 묶은 것
 //       public/            송출·수신 화면
-//       models/ko-streaming/  한국어 음성인식 모델
+//       stt-worker.mjs     음성인식 작업 스레드
+//       models/ko-sensevoice/ 음성인식 모델 (SenseVoice + Silero VAD)
 //       node_modules/      음성인식 엔진(sherpa-onnx) Windows용
 //
 // 인터넷 없는 노트북에서도 압축만 풀면 동작한다. 만들 때만 인터넷이 필요하다.
@@ -79,8 +80,10 @@ async function main() {
 
   step('서버를 한 파일로 묶기');
   await require('esbuild').build({
-    entryPoints: [join(ROOT, 'server/src/index.ts')],
-    outfile: join(APP, 'server.mjs'),
+    // 서버 본체와 음성인식 작업 스레드를 각각 한 파일로
+    entryPoints: { server: join(ROOT, 'server/src/index.ts'), 'stt-worker': join(ROOT, 'server/src/stt/sttWorker.ts') },
+    outdir: APP,
+    outExtension: { '.js': '.mjs' },
     bundle: true,
     platform: 'node',
     format: 'esm',
@@ -99,7 +102,22 @@ async function main() {
 
   step('음성 모델');
   npm(['run', 'model:download']);
-  cpSync(join(ROOT, 'models/ko-streaming'), join(APP, 'models/ko-streaming'), { recursive: true });
+  cpSync(join(ROOT, 'models/ko-sensevoice'), join(APP, 'models/ko-sensevoice'), { recursive: true });
+  // 모델 라이선스(FunASR Model License 1.1)가 요구하는 출처·모델명 표기
+  writeFileSync(
+    join(APP, 'models/ko-sensevoice/NOTICE.txt'),
+    [
+      '이 프로그램은 다음 음성인식 모델을 사용합니다.',
+      '',
+      '- SenseVoice Small (FunAudioLLM / Alibaba Group), sherpa-onnx int8 변환본',
+      '  https://github.com/FunAudioLLM/SenseVoice',
+      '  라이선스: FunASR Model Open Source License Agreement v1.1',
+      '  https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE',
+      '- Silero VAD (Silero Team), MIT License — https://github.com/snakers4/silero-vad',
+      '- sherpa-onnx (k2-fsa), Apache-2.0 — https://github.com/k2-fsa/sherpa-onnx',
+      '',
+    ].join('\r\n'),
+  );
 
   step(`Node.js ${NODE_MAJOR} (${target})`);
   const base = `https://nodejs.org/dist/latest-v${NODE_MAJOR}.x`;
@@ -138,7 +156,7 @@ async function main() {
   title Caption Server - close this window to stop
   cd /d "%~dp0app"
   set "STATIC_DIR=%~dp0app\\public"
-  set "STT_MODEL_DIR=%~dp0app\\models\\ko-streaming"
+  set "STT_MODEL_DIR=%~dp0app\\models\\ko-sensevoice"
   set "OPEN_BROWSER=1"
   "%~dp0app\\node.exe" "%~dp0app\\server.mjs"
   if errorlevel 1 pause
@@ -147,7 +165,7 @@ async function main() {
   if (!isWin) {
     writeFileSync(
       join(PKG, 'start.sh'),
-      `#!/bin/sh\ncd "$(dirname "$0")/app"\nSTATIC_DIR="$PWD/public" STT_MODEL_DIR="$PWD/models/ko-streaming" OPEN_BROWSER=1 exec ./node server.mjs\n`,
+      `#!/bin/sh\ncd "$(dirname "$0")/app"\nSTATIC_DIR="$PWD/public" STT_MODEL_DIR="$PWD/models/ko-sensevoice" OPEN_BROWSER=1 exec ./node server.mjs\n`,
       { mode: 0o755 },
     );
   }

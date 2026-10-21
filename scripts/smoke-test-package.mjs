@@ -30,7 +30,7 @@ console.log('package contents:', listing);
 const exe = join(app, process.platform === 'win32' ? 'node.exe' : 'node');
 const server = spawn(exe, [join(app, 'server.mjs')], {
   cwd: app,
-  env: { ...process.env, PORT: '3001', STATIC_DIR: join(app, 'public'), STT_MODEL_DIR: join(app, 'models/ko-streaming') },
+  env: { ...process.env, PORT: '3001', STATIC_DIR: join(app, 'public'), STT_MODEL_DIR: join(app, 'models/ko-sensevoice') },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 // 실패 시 원인을 보이도록 서버 출력을 모아 둔다
@@ -58,7 +58,12 @@ for (let i = 0; i < 60 && !ok; i++) {
 }
 if (!ok) fail('server did not start');
 
-const status = await (await fetch('http://localhost:3001/api/stt-status')).json();
+// 음성인식 엔진(모델 로딩)은 서버 시작 후 몇 초 걸린다
+let status = { available: false };
+for (let i = 0; i < 120 && !status.available; i++) {
+  status = await (await fetch('http://localhost:3001/api/stt-status')).json();
+  if (!status.available) await new Promise((r) => setTimeout(r, 500));
+}
 if (!status.available) fail(`stt unavailable: ${status.message}`);
 const page = await fetch('http://localhost:3001/host');
 if (!page.ok || !(await page.text()).includes('<div id="app">')) fail('host page not served');

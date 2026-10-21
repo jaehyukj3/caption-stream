@@ -79,13 +79,16 @@ client/   Vue 3 + Vite
 
 ## 음성인식: 노트북 로컬 엔진
 
-- 엔진: [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0), 한국어 스트리밍 모델 `sherpa-onnx-streaming-zipformer-korean-2024-06-16` (int8, 약 135MB)
-- 흐름: 송출 화면(크롬)이 마이크 소리를 16kHz PCM으로 `ws://localhost/stt`에 보내고, 서버가 인식해 중간/확정 문장을 돌려줍니다.
-- `/stt`는 **이 노트북(localhost)에서 온 연결만** 받습니다. 그래서 송출 화면은 반드시 `http://localhost:3001/host`로 엽니다.
-- 모델은 `models/ko-streaming/`에 두며 저장소에는 포함하지 않습니다. 처음 한 번 `npm run model:download`로 받습니다(실행기가 자동으로 받습니다).
-- 성능: 2스레드 기준 실시간의 약 1/13 CPU 시간(RTF 0.07). 일반 사무용 노트북에서 충분합니다.
+- 엔진: [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0)
+  - **SenseVoice Small** (FunAudioLLM, int8 약 240MB): 문장 단위로 받아 적음 — FunASR Model License 1.1 (출처·모델명 표기 조건, 상업 이용 가능)
+  - **Silero VAD**: 말하는 구간을 찾아 0.5초 쉬면 문장을 확정
+- 말하는 중에는 지금까지의 구간을 주기적으로 다시 인식해 흐린 중간 자막을 보여 주고, 쉬면 확정합니다.
+- 인식은 서버의 작업 스레드에서 돌아 자막 중계를 막지 않습니다.
+- 흐름: 송출 화면(크롬)이 마이크 소리를 16kHz PCM으로 `ws://localhost/stt`에 보내고, 서버가 인식해 결과를 돌려줍니다.
+  `/stt`는 **이 노트북(localhost)에서 온 연결만** 받습니다.
+- 모델은 `models/ko-sensevoice/`에 두며 저장소에는 포함하지 않습니다. 개발 환경에서는 `npm run model:download`로 받습니다(배포 패키지에는 포함).
+- 비교 측정(강의실 잔향·잡음을 섞은 음성, 글자 오류율): 이전 스트리밍 모델 인식 불가 → SenseVoice 3.9%, Whisper small 25%.
 - 비교·개발용으로 송출 주소에 `?stt=webspeech`를 붙이면 크롬 내장 음성인식(Google 서버 전송)을 씁니다.
-- 수신 기기: 최신 모바일 브라우저면 됩니다 (iOS Safari, 안드로이드 크롬 등).
 
 ## 개발 모드 (소스에서 실행)
 
