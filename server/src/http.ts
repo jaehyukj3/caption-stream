@@ -7,8 +7,10 @@ import {
   type CreateRoomResponse,
   type NetInfoResponse,
   type RoomStatusResponse,
+  type SttStatusResponse,
 } from '@caption/shared';
 import type { RoomManager } from './RoomManager.js';
+import { sttStatus } from './stt/SttEngine.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -47,10 +49,13 @@ export function createHttpHandler(rooms: RoomManager, staticDir: string | null) 
 
     if (path === '/api/net-info' && req.method === 'GET') {
       return json(res, 200, {
-        // Render 등 호스팅이 알려주는 외부 주소를 PUBLIC_URL 대신 써도 된다
-        publicUrl: (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL)?.replace(/\/$/, '') || null,
+        publicUrl: process.env.PUBLIC_URL?.replace(/\/$/, '') || null,
         lanAddresses: lanAddresses(),
       } satisfies NetInfoResponse);
+    }
+
+    if (path === '/api/stt-status' && req.method === 'GET') {
+      return json(res, 200, sttStatus() satisfies SttStatusResponse);
     }
 
     if (path === '/api/health') return json(res, 200, { ok: true });

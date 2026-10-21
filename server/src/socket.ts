@@ -1,9 +1,8 @@
-import type { IncomingMessage, Server } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
   isValidRoomCode,
   MAX_TEXT_LENGTH,
-  WS_PATH,
   type ClientMessage,
   type ErrorCode,
   type Role,
@@ -20,9 +19,10 @@ interface ConnState {
   alive: boolean;
 }
 
-export function attachWebSocket(server: Server, rooms: RoomManager): WebSocketServer {
+/** 자막 방 WebSocket. 업그레이드 라우팅은 index.ts에서 경로별로 한다. */
+export function createRoomWebSocketServer(rooms: RoomManager): WebSocketServer {
   // 자막 텍스트만 오가므로 프레임 크기를 작게 제한
-  const wss = new WebSocketServer({ server, path: WS_PATH, maxPayload: 16 * 1024 });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
   const states = new WeakMap<WebSocket, ConnState>();
 
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {

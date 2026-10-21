@@ -4,7 +4,7 @@
 
 ```
 [강사 PC · 크롬]                         [서버 · Node + ws]                [참석자 휴대폰]
- 마이크 → Web Speech API(ko-KR)            방(room)별 브로드캐스트            /view/123456
+ 마이크 → 로컬 음성인식(노트북 안)          방(room)별 브로드캐스트            /view/123456
    ├ interim(초당 ≤4회) ──────────────▶   확정 자막 이력(메모리) ──────▶   자막 표시
    └ final(용어 사전 치환 후) ────────▶   seq 부여 · 늦은 입장자에 history
 ```
@@ -23,36 +23,18 @@ client/   Vue 3 + Vite
 ## 요구 사항
 
 - Node.js 20 이상
-- **송출 PC: 데스크톱 크롬 또는 엣지.** 음성인식에 Web Speech API를 쓰기 때문입니다. 크롬의 Web Speech API는 음성을 Google 서버로 보내 인식하므로 **인터넷 연결이 필요**합니다.
+- **송출 PC: Windows 노트북 + 크롬 또는 엣지.**
+- 음성인식은 **노트북 안에서** 처리합니다 (아래 "음성인식" 참고). 음성은 외부로 전송되지 않습니다.
+
+## 음성인식: 노트북 로컬 엔진
+
+- 엔진: [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0), 한국어 스트리밍 모델 `sherpa-onnx-streaming-zipformer-korean-2024-06-16` (int8, 약 135MB)
+- 흐름: 송출 화면(크롬)이 마이크 소리를 16kHz PCM으로 `ws://localhost/stt`에 보내고, 서버가 인식해 중간/확정 문장을 돌려줍니다.
+- `/stt`는 **이 노트북(localhost)에서 온 연결만** 받습니다. 그래서 송출 화면은 반드시 `http://localhost:3001/host`로 엽니다.
+- 모델은 `models/ko-streaming/`에 두며 저장소에는 포함하지 않습니다. 처음 한 번 `npm run model:download`로 받습니다(실행기가 자동으로 받습니다).
+- 성능: 2스레드 기준 실시간의 약 1/13 CPU 시간(RTF 0.07). 일반 사무용 노트북에서 충분합니다.
+- 비교·개발용으로 송출 주소에 `?stt=webspeech`를 붙이면 크롬 내장 음성인식(Google 서버 전송)을 씁니다.
 - 수신 기기: 최신 모바일 브라우저면 됩니다 (iOS Safari, 안드로이드 크롬 등).
-
-## 🚀 인터넷에 배포하기 (Render) — 명령어 없이 주소로만 사용
-
-한 번 배포해 두면 강사는 크롬으로 `https://<서비스명>.onrender.com/host`만 열면 됩니다.
-HTTPS가 자동으로 붙어 **어느 PC에서든 마이크가 동작**하고, 참석자는 Wi‑Fi든 LTE든 QR만 찍으면 됩니다.
-
-### 처음 한 번만 (웹 화면에서 클릭)
-
-1. https://render.com 에 **GitHub 계정으로 가입/로그인**
-2. 우측 상단 **New + → Blueprint** 선택
-3. 이 저장소를 고르고 **Connect** → 저장소의 `render.yaml`을 읽어 설정이 자동으로 채워집니다
-4. **Apply** (또는 Deploy Blueprint) 클릭 → 3~5분 뒤 `https://caption-stream-xxxx.onrender.com` 같은 주소가 생깁니다
-5. 그 주소 뒤에 `/host`를 붙여 열면 송출 화면입니다. 즐겨찾기에 추가해 두세요.
-
-이후 GitHub에 코드가 올라가면 자동으로 다시 배포됩니다.
-
-### 요금제와 주의점
-
-| | Free | Starter (월 약 $7) |
-|---|---|---|
-| 15분간 요청이 없으면 | 서버가 잠듦 (깨어나는 데 30초~1분) | 항상 켜져 있음 |
-| 잠들거나 재배포되면 | 진행 중이던 방·자막 이력 사라짐 | 재배포 시에만 사라짐 |
-
-- **무료 플랜 사용 팁:** 강의 시작 5분 전에 송출 주소를 미리 열어 서버를 깨워 두세요. 송출 화면이 열려 있는 동안에는 5분마다 서버를 자동으로 깨워 두므로, 강의 중에 잠들지는 않습니다.
-- **정식 강의에 쓸 때**는 Render 대시보드의 서비스 → Settings → Instance Type에서 **Starter**로 바꾸는 것을 권장합니다.
-- 리전은 한국과 가까운 **싱가포르**로 설정되어 있습니다(`render.yaml`의 `region`). 자막은 텍스트만 오가므로 지연은 체감되지 않는 수준입니다.
-
----
 
 ## 빠른 시작 (개발 모드)
 
@@ -194,18 +176,19 @@ HTTP 엔드포인트는 `POST /api/rooms`(방 생성), `GET /api/rooms/:code`(�
 
 ## 확장 포인트
 
-- **STT 교체**: `client/src/stt/SttProvider.ts` 인터페이스를 구현한 클래스를 추가하고, `HostConsole.vue`의 `new WebSpeechProvider()` 한 줄을 바꾸면 됩니다. 클라우드 STT(Google, Azure, Clova)는 대개 서버를 거쳐야 하므로 오디오를 서버로 보내는 provider를 만들게 됩니다.
+- **STT 교체**: `client/src/stt/SttProvider.ts` 인터페이스를 구현하고 `client/src/stt/index.ts`에서 고르면 됩니다. 서버 쪽 엔진은 `server/src/stt/SttEngine.ts`입니다.
 - **Electron 오버레이**: `CaptionView.vue`는 props만 받는 순수 표시 컴포넌트입니다. `variant="overlay"`는 투명 배경, 외곽선 글자, 최근 N줄 표시를 지원합니다. Electron 창에서 `useRoomSocket(viewer)`와 `CaptionView`만 조합하면 투명·클릭 통과 자막 창이 됩니다.
 
 ## 테스트
 
 ```bash
-npm test -w server     # 방 이력/재입장, 쓰로틀, final 시 interim 폐기, 2시간 만료
+npm test -w server     # 방 이력/재입장, 쓰로틀, 2시간 만료 + (모델과 STT_TEST_WAV가 있으면) 로컬 음성인식 통합 테스트
 npm run typecheck
 ```
 
 ## 알려진 제한 (MVP)
 
 - 데이터는 메모리에만 있어 **서버를 재시작하면 모든 방이 사라집니다**. 단일 프로세스 기준이며, 여러 인스턴스로 확장하려면 Redis 같은 공유 저장소가 필요합니다.
-- Web Speech API는 크롬·엣지 전용이고, 음성이 Google(엣지는 Microsoft) 서버로 전송됩니다.
+- 로컬 엔진은 문장부호를 일부만 붙이며, 정확도는 클라우드 음성인식보다 낮을 수 있습니다. 용어 사전으로 자주 틀리는 단어를 보정하세요.
+- 용어 사전 치환 시 뒤따르는 조사(은/는, 과/와)는 고치지 않습니다.
 - 크롬은 인식을 스스로 끊는 경우가 있습니다(약 1분 경과, 침묵, 네트워크 오류). 앱이 자동으로 다시 시작하지만, 재시작 순간에 아주 짧은 구간이 누락될 수 있습니다.

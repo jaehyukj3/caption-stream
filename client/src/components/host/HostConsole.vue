@@ -6,8 +6,7 @@ import { useDictionary } from '../../composables/useDictionary';
 import { useMicLevel } from '../../composables/useMicLevel';
 import { usePreferences } from '../../composables/usePreferences';
 import { useRoomSocket } from '../../composables/useRoomSocket';
-import { WebSpeechProvider } from '../../stt/WebSpeechProvider';
-import type { SttProvider } from '../../stt/SttProvider';
+import { createSttProvider } from '../../stt';
 import { downloadCaptions } from '../../utils/download';
 import { throttle } from '../../utils/throttle';
 import CaptionView from '../caption/CaptionView.vue';
@@ -31,8 +30,8 @@ const dict = useDictionary();
 const { prefs, biggerFont, smallerFont } = usePreferences(26);
 const mic = useMicLevel();
 
-// STT 엔진 교체 지점: 다른 SttProvider 구현으로 바꾸면 된다
-const stt: SttProvider = new WebSpeechProvider('ko-KR');
+// STT 엔진 교체 지점: 기본은 노트북 안의 로컬 엔진 (stt/index.ts)
+const stt = createSttProvider();
 
 const micState = ref<MicState>('idle');
 const sttMessage = ref('');
@@ -65,7 +64,7 @@ stt.onError((err) => {
 
 async function start() {
   if (!stt.isSupported) {
-    sttMessage.value = '이 브라우저는 음성인식을 지원하지 않습니다. PC용 크롬(또는 엣지)을 사용해 주세요.';
+    sttMessage.value = '이 브라우저는 마이크 음성 처리를 지원하지 않습니다. 크롬 또는 엣지를 사용해 주세요.';
     return;
   }
   micState.value = 'starting';
@@ -76,7 +75,7 @@ async function start() {
     micState.value = 'running';
   } catch (e) {
     mic.stop();
-    stt.stop();
+    await stt.stop();
     micState.value = 'paused';
     const name = (e as DOMException).name;
     sttMessage.value ||=
@@ -88,18 +87,18 @@ async function start() {
   }
 }
 
-function pause() {
-  stt.stop(); // 남아 있던 중간 결과는 확정으로 처리된다
+async function pause() {
   mic.stop();
+  micState.value = 'paused';
+  await stt.stop(); // 말하던 문장까지 확정(onFinal)된 뒤 끝난다
   sendInterim.cancel();
   localInterim.value = '';
   socket.send({ type: 'interim', text: '' });
-  micState.value = 'paused';
 }
 
-function end() {
+async function end() {
   if (!window.confirm('세션을 종료할까요? 수신자 화면에 종료 안내가 표시되고 더 이상 자막을 보낼 수 없습니다.')) return;
-  if (micState.value === 'running') pause();
+  if (micState.value === 'running') await pause();
   socket.send({ type: 'end' });
   micState.value = 'ended';
 }
@@ -109,7 +108,7 @@ watch(
   () => store.state.ended,
   (ended) => {
     if (!ended) return;
-    if (micState.value === 'running' || micState.value === 'starting') pause();
+    if (micState.value === 'running' || micState.value === 'starting') void pause();
     micState.value = 'ended';
   },
 );
@@ -135,17 +134,10 @@ const connLabel = computed(
 const onBeforeUnload = (e: BeforeUnloadEvent) => {
   if (micState.value === 'running') e.preventDefault();
 };
-// 무료 호스팅(Render 등)은 HTTP 요청이 15분간 없으면 서버를 재워 방이 사라질 수 있다.
-// 송출 화면이 열려 있는 동안은 주기적으로 깨워 둔다.
-let keepAlive: ReturnType<typeof setInterval> | undefined;
-onMounted(() => {
-  window.addEventListener('beforeunload', onBeforeUnload);
-  keepAlive = setInterval(() => void fetch('/api/health', { cache: 'no-store' }).catch(() => {}), 5 * 60 * 1000);
-});
+onMounted(() => window.addEventListener('beforeunload', onBeforeUnload));
 onBeforeUnmount(() => {
-  clearInterval(keepAlive);
   window.removeEventListener('beforeunload', onBeforeUnload);
-  stt.stop();
+  void stt.stop();
 });
 </script>
 

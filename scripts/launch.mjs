@@ -1,5 +1,5 @@
 // 노트북 실행기: START-Windows.bat / START-Mac.command가 Node.js를 준비한 뒤 이 파일을 실행한다.
-// 1) 필요한 패키지 설치  2) 화면 빌드  3) 서버 시작  4) 크롬(없으면 엣지)으로 송출 화면 열기
+// 1) 필요한 패키지 설치  2) 음성 모델 준비  3) 화면 빌드  4) 서버 시작  5) 크롬(없으면 엣지)으로 송출 화면 열기
 // 이미 설치·빌드되어 있으면 건너뛰므로 두 번째 실행부터는 몇 초 만에 켜진다.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -60,6 +60,15 @@ function buildClient() {
 
   step('화면을 준비합니다…');
   if (!npm(['run', 'build'])) fail('화면 빌드에 실패했습니다.');
+}
+
+/** 음성 모델이 없으면 받는다 (배포 패키지에는 들어 있어 이 단계가 생략된다) */
+function ensureModel() {
+  const dir = join(ROOT, 'models/ko-streaming');
+  if (['encoder.int8.onnx', 'decoder.onnx', 'joiner.int8.onnx', 'tokens.txt'].every((f) => existsSync(join(dir, f)))) return;
+  step('음성인식 모델을 준비합니다 (처음 한 번, 인터넷 필요)…');
+  const r = spawnSync(process.execPath, [join(ROOT, 'scripts/download-model.mjs')], { cwd: ROOT, stdio: 'inherit' });
+  if (r.status !== 0) fail('음성 모델을 받지 못했습니다. 인터넷 연결을 확인하고 다시 실행해 주세요.');
 }
 
 async function isRunning() {
@@ -134,6 +143,7 @@ if (await isRunning()) {
 }
 
 installDeps();
+ensureModel();
 buildClient();
 startServer();
 

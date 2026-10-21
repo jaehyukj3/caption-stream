@@ -132,3 +132,28 @@ export const MAX_TEXT_LENGTH = 2000;
 export function isValidRoomCode(code: string): boolean {
   return /^\d{6}$/.test(code);
 }
+
+// ───────── 로컬 음성인식 (/stt) ─────────
+// 송출 화면 → 서버: 16kHz mono Int16 LE PCM 바이너리 프레임, 또는 아래 JSON 텍스트 프레임
+// 같은 노트북(localhost)에서 온 연결만 받는다. 음성은 노트북 밖으로 나가지 않는다.
+
+export const STT_PATH = '/stt';
+export const STT_SAMPLE_RATE = 16000;
+
+export interface SttFlushMessage {
+  /** 말하던 문장을 확정시킨다(일시정지·종료 직전). 서버는 final(있으면) 후 flushed로 답한다. */
+  type: 'flush';
+}
+
+export type SttServerMessage =
+  | { type: 'ready' }
+  | { type: 'interim'; text: string }
+  | { type: 'final'; text: string }
+  | { type: 'flushed' }
+  | { type: 'error'; code: 'NO_MODEL' | 'NOT_LOCAL' | 'ENGINE_ERROR'; message: string };
+
+/** GET /api/stt-status 응답 */
+export interface SttStatusResponse {
+  available: boolean;
+  message?: string;
+}

@@ -96,7 +96,7 @@ export class WebSpeechProvider implements SttProvider {
     this.startRecognition();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.running = false;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = null;
@@ -150,7 +150,7 @@ export class WebSpeechProvider implements SttProvider {
     const fatalMessage = FATAL_ERRORS[e.error];
     if (fatalMessage) {
       this.errorCb({ fatal: true, code: e.error, message: fatalMessage });
-      this.stop();
+      void this.stop();
       return;
     }
     // network 등 일시적 오류: onend에서 백오프 후 재시작
