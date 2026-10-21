@@ -10,10 +10,10 @@ import { attachWebSocket } from './socket.js';
 const PORT = Number(process.env.PORT ?? 3001);
 const HOST = process.env.HOST ?? '0.0.0.0';
 
-// 운영 모드에서는 빌드된 클라이언트(client/dist)도 이 서버가 서빙한다
+// 빌드된 클라이언트(client/dist)가 있으면 이 서버가 화면까지 서빙한다 (노트북 실행·운영 모드)
 const here = dirname(fileURLToPath(import.meta.url));
 const distDir = resolve(here, '../../client/dist');
-const staticDir = process.env.NODE_ENV === 'production' && existsSync(distDir) ? distDir : null;
+const staticDir = existsSync(distDir) ? distDir : null;
 
 const rooms = new RoomManager();
 rooms.start();
