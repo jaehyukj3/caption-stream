@@ -39,7 +39,7 @@ export function loadSttEngine(): boolean {
   if (recognizer) return true;
   const missing = MODEL_FILES.filter((f) => !existsSync(join(MODEL_DIR, f)));
   if (missing.length) {
-    loadError = `음성 모델 파일이 없습니다 (${MODEL_DIR}). 실행기를 다시 실행하거나 "npm run model:download"를 실행해 주세요.`;
+    loadError = `음성 모델 파일이 없습니다 (${MODEL_DIR}). 배포 패키지라면 압축을 다시 풀어 주세요. (개발 환경: "npm run model:download")`;
     return false;
   }
   try {

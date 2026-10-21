@@ -12,7 +12,8 @@ import { throttle } from '../../utils/throttle';
 import CaptionView from '../caption/CaptionView.vue';
 import DictionaryEditor from './DictionaryEditor.vue';
 import FloatingCaptionButton from './FloatingCaptionButton.vue';
-import MicControls, { type MicState } from './MicControls.vue';
+import MicControls, { type MicDevice, type MicState } from './MicControls.vue';
+import { readJson, writeJson } from '../../utils/storage';
 import SessionPanel from './SessionPanel.vue';
 
 const props = defineProps<{ code: string; hostToken: string }>();
@@ -34,6 +35,24 @@ const mic = useMicLevel();
 const stt = createSttProvider();
 
 const micState = ref<MicState>('idle');
+
+// 마이크 선택 (USB 오디오 어댑터로 앰프 출력을 받는 경우 등). 기기별로 기억한다.
+const MIC_KEY = 'caption.micDeviceId';
+const micDeviceId = ref<string>(readJson(localStorage, MIC_KEY, ''));
+const micDevices = ref<MicDevice[]>([]);
+watch(micDeviceId, (v) => writeJson(localStorage, MIC_KEY, v));
+
+async function refreshDevices() {
+  const all = await navigator.mediaDevices?.enumerateDevices().catch(() => []) ?? [];
+  // Windows 크롬의 'default'/'communications'는 실제 장치의 별칭이라 뺀다
+  micDevices.value = all
+    .filter((d) => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications')
+    .map((d, i) => ({ deviceId: d.deviceId, label: d.label || `마이크 ${i + 1}` }));
+  // 뽑혀 있는 장치를 기억하고 있으면 기본 마이크로 되돌린다
+  if (micDeviceId.value && micDevices.value.length && !micDevices.value.some((d) => d.deviceId === micDeviceId.value)) {
+    micDeviceId.value = '';
+  }
+}
 const sttMessage = ref('');
 /** 송출자 화면의 중간 결과는 로컬 STT 결과를 바로 보여준다(서버 왕복 없음) */
 const localInterim = ref('');
@@ -70,9 +89,11 @@ async function start() {
   micState.value = 'starting';
   sttMessage.value = '';
   try {
-    await mic.start();
+    await mic.start(micDeviceId.value);
+    stt.setDeviceId?.(micDeviceId.value);
     await stt.start();
     micState.value = 'running';
+    void refreshDevices(); // 권한을 받은 뒤에야 장치 이름이 보인다
   } catch (e) {
     mic.stop();
     await stt.stop();
@@ -134,9 +155,14 @@ const connLabel = computed(
 const onBeforeUnload = (e: BeforeUnloadEvent) => {
   if (micState.value === 'running') e.preventDefault();
 };
-onMounted(() => window.addEventListener('beforeunload', onBeforeUnload));
+onMounted(() => {
+  window.addEventListener('beforeunload', onBeforeUnload);
+  navigator.mediaDevices?.addEventListener('devicechange', refreshDevices);
+  void refreshDevices();
+});
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', onBeforeUnload);
+  navigator.mediaDevices?.removeEventListener('devicechange', refreshDevices);
   void stt.stop();
 });
 </script>
@@ -168,7 +194,15 @@ onBeforeUnmount(() => {
     </main>
 
     <aside class="side">
-      <MicControls :state="micState" :level="mic.level.value" @start="start" @pause="pause" @end="end" />
+      <MicControls
+        v-model:device-id="micDeviceId"
+        :state="micState"
+        :level="mic.level.value"
+        :devices="micDevices"
+        @start="start"
+        @pause="pause"
+        @end="end"
+      />
 
       <div v-if="micState === 'ended'" class="card ended">
         <strong>세션이 종료되었습니다.</strong>

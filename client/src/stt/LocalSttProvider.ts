@@ -4,16 +4,27 @@ import type { SttError, SttProvider } from './SttProvider';
 /**
  * 마이크 소리를 16kHz PCM(Int16)으로 100ms씩 잘라 보내는 AudioWorklet.
  * AudioContext를 16kHz로 만들면 브라우저가 리샘플링해 준다.
+ *
+ * 입력 음량 자동 맞춤: 앰프 출력(크게 들어옴)이든 스피커 소리를 내장 마이크로
+ * 받는 경우(작게 들어옴)든 인식에 알맞은 크기로 천천히 맞춘다.
+ * 말소리 구간만 기준으로 삼아 조용할 때 잡음을 키우지 않는다.
  */
 const WORKLET_SOURCE = `
 const CHUNK = ${STT_SAMPLE_RATE / 10};
+const TARGET = 0.08, FLOOR = 0.004, MIN_GAIN = 0.5, MAX_GAIN = 8;
 class PcmCapture extends AudioWorkletProcessor {
-  constructor() { super(); this.buf = new Int16Array(CHUNK); this.n = 0; }
+  constructor() { super(); this.buf = new Int16Array(CHUNK); this.n = 0; this.env = TARGET; this.gain = 1; }
   process(inputs) {
     const ch = inputs[0] && inputs[0][0];
     if (ch) {
+      let sum = 0;
+      for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
+      const rms = Math.sqrt(sum / ch.length);
+      if (rms > FLOOR) this.env = this.env * 0.995 + rms * 0.005;
+      const want = Math.min(MAX_GAIN, Math.max(MIN_GAIN, TARGET / this.env));
+      this.gain += (want - this.gain) * 0.01;
       for (let i = 0; i < ch.length; i++) {
-        const s = Math.max(-1, Math.min(1, ch[i]));
+        const s = Math.max(-1, Math.min(1, ch[i] * this.gain));
         this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
         if (this.n === CHUNK) {
           // 버퍼를 넘기면(transfer) 원래 배열은 길이 0이 되므로 새로 만든다
@@ -46,6 +57,7 @@ export class LocalSttProvider implements SttProvider {
   private lastInterim = '';
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private flushWaiter: (() => void) | null = null;
+  private deviceId: string | null = null;
 
   private interimCb: (t: string) => void = () => {};
   private finalCb: (t: string) => void = () => {};
@@ -59,6 +71,10 @@ export class LocalSttProvider implements SttProvider {
   }
   onError(cb: (err: SttError) => void) {
     this.errorCb = cb;
+  }
+
+  setDeviceId(deviceId: string | null) {
+    this.deviceId = deviceId || null;
   }
 
   async start(): Promise<void> {
@@ -162,7 +178,13 @@ export class LocalSttProvider implements SttProvider {
   private async startAudio() {
     // 브라우저 잡음 제거·자동 음량은 인식률을 떨어뜨려 끈다 (실측: 끝음절 누락, 오인식 증가)
     this.media = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      audio: {
+        deviceId: this.deviceId ? { exact: this.deviceId } : undefined,
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
     });
     const ctx = new AudioContext({ sampleRate: STT_SAMPLE_RATE });
     this.ctx = ctx;

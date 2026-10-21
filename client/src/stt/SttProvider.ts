@@ -12,6 +12,8 @@ export interface SttProvider {
   onInterim(cb: (text: string) => void): void;
   onFinal(cb: (text: string) => void): void;
   onError(cb: (err: SttError) => void): void;
+  /** 사용할 마이크 (없으면 Windows 기본 마이크). 다음 start()부터 적용 */
+  setDeviceId?(deviceId: string | null): void;
 }
 
 export interface SttError {

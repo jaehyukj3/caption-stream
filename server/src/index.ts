@@ -6,15 +6,17 @@ import { STT_PATH, WS_PATH } from '@caption/shared';
 import { createHttpHandler } from './http.js';
 import { RoomManager } from './RoomManager.js';
 import { createRoomWebSocketServer } from './socket.js';
+import { desktopMode, isAlreadyRunning, openBrowser, printGuide } from './desktop.js';
 import { loadSttEngine, sttStatus } from './stt/SttEngine.js';
 import { createSttWebSocketServer } from './stt/sttSocket.js';
 
 const PORT = Number(process.env.PORT ?? 3001);
 const HOST = process.env.HOST ?? '0.0.0.0';
 
-// 빌드된 클라이언트(client/dist)가 있으면 이 서버가 화면까지 서빙한다 (노트북 실행·운영 모드)
+// 빌드된 화면이 있으면 이 서버가 화면까지 서빙한다 (노트북 실행·운영 모드).
+// 배포 패키지는 STATIC_DIR로 위치를 알려 준다.
 const here = dirname(fileURLToPath(import.meta.url));
-const distDir = resolve(here, '../../client/dist');
+const distDir = process.env.STATIC_DIR ?? resolve(here, '../../client/dist');
 const staticDir = existsSync(distDir) ? distDir : null;
 
 const rooms = new RoomManager();
@@ -37,7 +39,13 @@ server.on('upgrade', (req, socket, head) => {
   target.handleUpgrade(req, socket, head, (ws) => target.emit('connection', ws, req));
 });
 
-server.on('error', (e: NodeJS.ErrnoException) => {
+server.on('error', async (e: NodeJS.ErrnoException) => {
+  if (e.code === 'EADDRINUSE' && desktopMode && (await isAlreadyRunning(PORT))) {
+    console.log('이미 실시간 자막이 켜져 있습니다. 송출 화면을 다시 엽니다.');
+    openBrowser(`http://localhost:${PORT}/host`);
+    setTimeout(() => process.exit(0), 3000);
+    return;
+  }
   console.error(e.code === 'EADDRINUSE' ? `[server] 포트 ${PORT}을(를) 이미 다른 프로그램이 쓰고 있습니다.` : e);
   process.exit(1);
 });
@@ -46,6 +54,10 @@ server.listen(PORT, HOST, () => {
   console.log(`[server] http://${HOST}:${PORT}  (ws: ${WS_PATH})`);
   console.log(`[stt] ${sttStatus().available ? '로컬 음성인식 준비됨' : '로컬 음성인식 사용 불가'}`);
   console.log(staticDir ? `[server] serving client from ${staticDir}` : '[server] API only (client는 Vite dev 서버 사용)');
+  if (desktopMode) {
+    printGuide(PORT);
+    openBrowser(`http://localhost:${PORT}/host`);
+  }
 });
 
 function shutdown(): void {

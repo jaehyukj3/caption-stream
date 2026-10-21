@@ -12,9 +12,9 @@ export function useMicLevel() {
   let ctx: AudioContext | null = null;
   let raf = 0;
 
-  async function start() {
+  async function start(deviceId?: string | null) {
     if (active.value) return;
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: deviceId ? { deviceId: { exact: deviceId } } : true });
     ctx = new AudioContext();
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 1024;

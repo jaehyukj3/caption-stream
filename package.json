@@ -16,10 +16,12 @@
     "build": "npm run build -w client",
     "start": "npm run start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w client",
-    "model:download": "node scripts/download-model.mjs"
+    "model:download": "node scripts/download-model.mjs",
+    "package:windows": "node scripts/build-windows-package.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.0",
+    "esbuild": "^0.28.2",
     "typescript": "~5.9.3"
   }
 }
