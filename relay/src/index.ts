@@ -22,13 +22,59 @@ const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
 type Attachment = { role: 'pub'; authed: boolean } | { role: 'sub'; id: string };
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
-    const m = RID.exec(new URL(req.url).pathname);
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const path = new URL(req.url).pathname;
+    if (path === '/download' || path === '/download/') return serveDownload(req, env, ctx);
+    const m = RID.exec(path);
     if (!m) return env.ASSETS.fetch(req);
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('websocket only', { status: 426 });
     return env.RELAY.get(env.RELAY.idFromName(m[1]!)).fetch(req);
   },
 } satisfies ExportedHandler<Env>;
+
+interface DownloadManifest {
+  file: string;
+  size: number;
+  sha256: string;
+  parts: string[];
+}
+
+/**
+ * 노트북 프로그램 zip 내려받기. 정적 파일은 한 개 25MB 제한이라 20MB 조각(/dl/*.partNNN)으로 올려 두고,
+ * 여기서 순서대로 이어 붙여 zip 하나로 보낸다 (scripts/stage-download.mjs가 조각을 만든다).
+ */
+async function serveDownload(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const res = await env.ASSETS.fetch(new URL('/dl/manifest.json', req.url));
+  // 없으면 화면(index.html)이 대신 오므로 형식으로 구분
+  if (!res.ok || !res.headers.get('content-type')?.includes('json')) {
+    return new Response('노트북 프로그램을 준비하는 중입니다. 잠시 후 다시 시도해 주세요.', {
+      status: 404,
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+    });
+  }
+  const m = (await res.json()) as DownloadManifest;
+  const headers = {
+    'content-type': 'application/zip',
+    'content-length': String(m.size),
+    'content-disposition': `attachment; filename="${m.file}"`,
+    'cache-control': 'no-cache',
+    'x-content-sha256': m.sha256,
+  };
+  if (req.method === 'HEAD') return new Response(null, { headers });
+
+  const { readable, writable } = new FixedLengthStream(m.size);
+  ctx.waitUntil(
+    (async () => {
+      for (const part of m.parts) {
+        const r = await env.ASSETS.fetch(new URL(`/dl/${part}`, req.url));
+        if (!r.ok || !r.body) throw new Error(`missing ${part}`);
+        await r.body.pipeTo(writable, { preventClose: true });
+      }
+      await writable.close();
+    })().catch((e) => writable.abort(e)),
+  );
+  return new Response(readable, { headers });
+}
 
 export class RelayRoom extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {

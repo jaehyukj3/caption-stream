@@ -123,6 +123,7 @@ function onInvalid() {
         </p>
         <p v-if="!sttSupported" class="notice is-error">이 브라우저는 음성인식을 지원하지 않습니다. 안드로이드·PC는 크롬, 아이폰은 사파리를 사용해 주세요.</p>
         <button type="button" class="btn btn-primary big" :disabled="!sttSupported" @click="createSession">세션 만들기</button>
+        <a class="download" href="/download">기관용 노트북 프로그램 받기 (Windows · 약 200MB) — 음성이 외부로 나가지 않습니다</a>
       </div>
     </main>
 
@@ -188,6 +189,12 @@ function onInvalid() {
 }
 .start-card p {
   margin: 0;
+}
+.download {
+  margin-top: 4px;
+  font-size: 14px;
+  color: var(--muted);
+  text-align: center;
 }
 .big {
   min-height: 52px;

@@ -8,6 +8,8 @@ usePreferences();
 const router = useRouter();
 const code = ref('');
 const normalized = computed(() => code.value.replace(/\D/g, ''));
+/** 노트북 프로그램 안에서 연 화면이면 받기 링크를 숨긴다 */
+const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname) || /^(192\.168|10)\./.test(location.hostname);
 
 function join() {
   if (isValidRoomCode(normalized.value)) router.push(`/view/${normalized.value}`);
@@ -23,6 +25,7 @@ function join() {
       <button type="submit" class="btn btn-primary" :disabled="!isValidRoomCode(normalized)">자막 보기</button>
     </form>
     <RouterLink to="/host" class="muted host-link">강사이신가요? 송출하기 →</RouterLink>
+    <a v-if="!isLocal" href="/download" class="muted host-link">기관용 노트북 프로그램 받기 (Windows)</a>
   </main>
 </template>
 

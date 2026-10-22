@@ -9,7 +9,7 @@ compatibility_date = "2025-09-01"
 directory = "../client/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/relay/*"]
+run_worker_first = ["/relay/*", "/download"]
 
 [[durable_objects.bindings]]
 name = "RELAY"
