@@ -59,7 +59,8 @@ export class WebSpeechProvider implements SttProvider {
   private lastInterim = '';
   private lastFinal = '';
   private lastFinalAt = 0;
-  private readonly finalized = new Set<number>();
+  /** 이번 인식 세션에서 확정으로 낸 결과: 번호 → 내용 */
+  private readonly finalized = new Map<number, string>();
   private restartDelay = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private startedAt = 0;
@@ -132,12 +133,14 @@ export class WebSpeechProvider implements SttProvider {
   private handleResult(e: RecognitionEvent) {
     let interim = '';
     // 안드로이드 크롬은 resultIndex를 늘 0으로 주고 이미 확정된 결과를 매번 다시 보낸다.
-    // 그래서 처음부터 훑되, 이번 인식 세션에서 이미 낸 확정 결과(번호)는 건너뛴다.
+    // 그래서 처음부터 훑되, 이번 인식 세션에서 같은 번호·같은 내용으로 이미 낸 확정 결과는 건너뛴다.
+    // (번호 0을 새 문장마다 다시 쓰는 브라우저도 있어 번호만으로는 판단하지 않는다)
     for (let i = 0; i < e.results.length; i++) {
       const r = e.results[i]!;
       if (r.isFinal) {
-        if (this.finalized.has(i)) continue;
-        this.finalized.add(i);
+        const key = norm(r[0].transcript);
+        if (this.finalized.get(i) === key) continue;
+        this.finalized.set(i, key);
         this.emitFinal(r[0].transcript);
       } else {
         interim += r[0].transcript;
