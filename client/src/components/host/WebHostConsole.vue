@@ -2,7 +2,7 @@
 /**
  * 웹 송출: 노트북 프로그램 없이 브라우저(PC·폰)에서 바로 송출한다.
  * 노트북 서버가 하던 일(방 관리·암호화·중계 연결)을 이 탭이 맡고,
- * 음성인식은 브라우저 내장 기능(구글·애플 서버)을 쓴다 — 테스트용.
+ * 음성인식은 브라우저 내장 기능(구글·애플 서버)을 쓴다.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { randomId, RelayBridge, Room, type RoomDirectory, type ServerMessage, type ShareMessage } from '@caption/shared';
@@ -152,8 +152,8 @@ onBeforeUnmount(() => {
 
     <aside class="side">
       <p class="notice web-note">
-        <b>웹 송출 (테스트용)</b> — 브라우저 내장 음성인식을 써서 음성이 구글·애플 서버로 전송됩니다.
-        이 화면을 닫거나 새로고침하면 자막이 끝납니다. 실제 강의는 노트북 프로그램(음성 외부 전송 없음)을 쓰세요.
+        <b>웹 송출</b> — 브라우저 내장 음성인식을 써서 음성이 구글·애플 서버로 전송됩니다.
+        이 화면을 닫거나 새로고침하면 자막이 끝납니다. 음성이 밖으로 나가면 안 되는 강의는 노트북 프로그램(음성 외부 전송 없음)을 쓰세요.
       </p>
 
       <MicControls v-model:device-id="noDevice" :state="micState" :level="0" :devices="[]" simple @start="start" @pause="pause" @end="end" />

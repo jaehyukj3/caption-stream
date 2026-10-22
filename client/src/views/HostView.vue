@@ -18,7 +18,7 @@ const error = ref('');
 /**
  * 송출 방식
  *  - laptop: 노트북 프로그램(START.bat)이 띄운 화면. 노트북 안에서 음성인식(음성 외부 전송 없음)
- *  - web:    노트북 프로그램 없이 웹 주소로 접속. 브라우저 내장 음성인식(테스트용)
+ *  - web:    노트북 프로그램 없이 웹 주소로 접속. 브라우저 내장 음성인식
  */
 const mode = ref<'laptop' | 'web' | null>(null);
 const webSession = ref(0);
@@ -115,10 +115,10 @@ function onInvalid() {
 
     <main v-else-if="!checking && mode === 'web'" class="start">
       <div class="card start-card">
-        <h1>웹에서 바로 송출</h1>
+        <h1>웹 송출</h1>
         <p class="muted">프로그램 설치 없이 이 브라우저(PC·휴대폰)에서 송출합니다. 참석자는 QR을 찍어 자막을 봅니다.</p>
         <p class="notice">
-          <b>테스트용입니다.</b> 브라우저 내장 음성인식을 써서 음성이 구글·애플 서버로 전송됩니다. 이 화면을 닫거나 휴대폰 화면이 꺼지면 자막이 멈춥니다.
+          브라우저 내장 음성인식을 써서 음성이 구글·애플 서버로 전송됩니다. 이 화면을 닫거나 휴대폰 화면이 꺼지면 자막이 멈춥니다.
           음성이 밖으로 나가면 안 되는 강의는 노트북 프로그램을 쓰세요.
         </p>
         <p v-if="!sttSupported" class="notice is-error">이 브라우저는 음성인식을 지원하지 않습니다. 안드로이드·PC는 크롬, 아이폰은 사파리를 사용해 주세요.</p>
