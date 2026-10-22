@@ -41,6 +41,10 @@ const FATAL_ERRORS: Record<string, string> = {
 };
 
 const MAX_RESTART_DELAY_MS = 5000;
+/** 이 시간 안에 같은(또는 이어 붙은) 문장이 다시 오면 중복으로 본다 */
+const DUPLICATE_WINDOW_MS = 10_000;
+const IGNORED = /[\s.,?!]/;
+const norm = (s: string) => s.replace(/[\s.,?!]/g, '');
 
 /**
  * 크롬 Web Speech API 구현.
@@ -53,6 +57,9 @@ export class WebSpeechProvider implements SttProvider {
   private rec: Recognition | null = null;
   private running = false;
   private lastInterim = '';
+  private lastFinal = '';
+  private lastFinalAt = 0;
+  private readonly finalized = new Set<number>();
   private restartDelay = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private startedAt = 0;
@@ -114,6 +121,7 @@ export class WebSpeechProvider implements SttProvider {
   private startRecognition() {
     if (!this.rec || !this.running) return;
     this.startedAt = Date.now();
+    this.finalized.clear(); // 결과 번호는 인식 세션마다 0부터 다시 매겨진다
     try {
       this.rec.start();
     } catch {
@@ -123,24 +131,56 @@ export class WebSpeechProvider implements SttProvider {
 
   private handleResult(e: RecognitionEvent) {
     let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
+    // 안드로이드 크롬은 resultIndex를 늘 0으로 주고 이미 확정된 결과를 매번 다시 보낸다.
+    // 그래서 처음부터 훑되, 이번 인식 세션에서 이미 낸 확정 결과(번호)는 건너뛴다.
+    for (let i = 0; i < e.results.length; i++) {
       const r = e.results[i]!;
-      const text = r[0].transcript;
       if (r.isFinal) {
-        const t = text.trim();
-        if (t) this.finalCb(t);
-        this.lastInterim = '';
+        if (this.finalized.has(i)) continue;
+        this.finalized.add(i);
+        this.emitFinal(r[0].transcript);
       } else {
-        interim += text;
+        interim += r[0].transcript;
       }
     }
-    interim = interim.trim();
+    interim = this.withoutPrevious(interim.trim());
     if (interim !== this.lastInterim) {
       this.lastInterim = interim;
       this.interimCb(interim);
     }
     // 결과가 들어온다는 건 정상 동작 중이라는 뜻
     this.restartDelay = 0;
+  }
+
+  /**
+   * 확정 문장 내보내기. 기기·브라우저별 반복 버그를 걸러 낸다.
+   *  - 같은 문장이 곧바로 다시 오는 경우(재시작 직후 등) → 버림
+   *  - 앞 문장에 이어 붙은 누적 결과("안녕하세요" → "안녕하세요 여러분") → 새로 붙은 부분만
+   */
+  private emitFinal(raw: string) {
+    const text = raw.trim();
+    this.lastInterim = '';
+    if (!text) return;
+    const recent = Date.now() - this.lastFinalAt < DUPLICATE_WINDOW_MS;
+    if (recent && norm(text) === norm(this.lastFinal)) return;
+    const fresh = this.withoutPrevious(text);
+    this.lastFinal = text;
+    this.lastFinalAt = Date.now();
+    if (fresh) this.finalCb(fresh);
+  }
+
+  /** 직전 확정 문장으로 시작하면 그 부분을 뺀 나머지 (누적형 결과 대응) */
+  private withoutPrevious(text: string): string {
+    const prev = norm(this.lastFinal);
+    if (!prev || Date.now() - this.lastFinalAt > DUPLICATE_WINDOW_MS) return text;
+    const n = norm(text);
+    if (n === prev) return '';
+    if (!n.startsWith(prev)) return text;
+    // 공백·문장부호를 무시하고 앞 문장 길이만큼 건너뛴다
+    let seen = 0;
+    let i = 0;
+    for (; i < text.length && seen < prev.length; i++) if (!IGNORED.test(text[i]!)) seen++;
+    return text.slice(i).replace(/^[\s.,?!]+/, '').trim();
   }
 
   private handleError(e: RecognitionErrorEvent) {
@@ -178,8 +218,8 @@ export class WebSpeechProvider implements SttProvider {
   }
 
   private flushInterimAsFinal() {
-    const t = this.lastInterim.trim();
+    const t = this.lastInterim;
     this.lastInterim = '';
-    if (t) this.finalCb(t);
+    if (t) this.emitFinal(t);
   }
 }
