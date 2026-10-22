@@ -44,7 +44,20 @@ const MAX_RESTART_DELAY_MS = 5000;
 /** 이 시간 안에 같은(또는 이어 붙은) 문장이 다시 오면 중복으로 본다 */
 const DUPLICATE_WINDOW_MS = 10_000;
 const IGNORED = /[\s.,?!]/;
+/** 잠시 쉬면(이어지는 결과가 없으면) 한 줄로 확정 */
+const COMMIT_DELAY_MS = 900;
 const norm = (s: string) => s.replace(/[\s.,?!]/g, '');
+
+/** text가 prefix로 시작하면(공백·문장부호 무시) 그 부분을 뺀 나머지 */
+function stripPrefix(text: string, prefix: string): string {
+  const p = norm(prefix);
+  const n = norm(text);
+  if (!p || !n.startsWith(p)) return text;
+  let seen = 0;
+  let i = 0;
+  for (; i < text.length && seen < p.length; i++) if (!IGNORED.test(text[i]!)) seen++;
+  return text.slice(i).replace(/^[\s.,?!]+/, '').trim();
+}
 
 /**
  * 크롬 Web Speech API 구현.
@@ -57,6 +70,11 @@ export class WebSpeechProvider implements SttProvider {
   private rec: Recognition | null = null;
   private running = false;
   private lastInterim = '';
+  /** 브라우저가 준 지금의 중간 결과 그대로 */
+  private rawInterim = '';
+  /** 확정됐지만 아직 내보내지 않은 문장 (이어지는 결과를 기다리는 중) */
+  private pending = '';
+  private commitTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFinal = '';
   private lastFinalAt = 0;
   /** 이번 인식 세션에서 확정으로 낸 결과: 번호 → 내용 */
@@ -117,6 +135,7 @@ export class WebSpeechProvider implements SttProvider {
       rec.abort();
     }
     this.flushInterimAsFinal();
+    this.commit();
   }
 
   private startRecognition() {
@@ -133,7 +152,7 @@ export class WebSpeechProvider implements SttProvider {
   private handleResult(e: RecognitionEvent) {
     let interim = '';
     // 안드로이드 크롬은 resultIndex를 늘 0으로 주고 이미 확정된 결과를 매번 다시 보낸다.
-    // 그래서 처음부터 훑되, 이번 인식 세션에서 같은 번호·같은 내용으로 이미 낸 확정 결과는 건너뛴다.
+    // 그래서 처음부터 훑되, 이번 인식 세션에서 같은 번호·같은 내용으로 이미 받은 확정 결과는 건너뛴다.
     // (번호 0을 새 문장마다 다시 쓰는 브라우저도 있어 번호만으로는 판단하지 않는다)
     for (let i = 0; i < e.results.length; i++) {
       const r = e.results[i]!;
@@ -141,49 +160,73 @@ export class WebSpeechProvider implements SttProvider {
         const key = norm(r[0].transcript);
         if (this.finalized.get(i) === key) continue;
         this.finalized.set(i, key);
-        this.emitFinal(r[0].transcript);
+        this.stage(r[0].transcript);
       } else {
         interim += r[0].transcript;
       }
     }
-    interim = this.withoutPrevious(interim.trim());
-    if (interim !== this.lastInterim) {
-      this.lastInterim = interim;
-      this.interimCb(interim);
-    }
+    this.rawInterim = interim.trim();
+    this.showInterim();
     // 결과가 들어온다는 건 정상 동작 중이라는 뜻
     this.restartDelay = 0;
   }
 
   /**
-   * 확정 문장 내보내기. 기기·브라우저별 반복 버그를 걸러 낸다.
-   *  - 같은 문장이 곧바로 다시 오는 경우(재시작 직후 등) → 버림
-   *  - 앞 문장에 이어 붙은 누적 결과("안녕하세요" → "안녕하세요 여러분") → 새로 붙은 부분만
+   * 확정 결과를 바로 내보내지 않고 잠깐 붙잡아 둔다.
+   * 휴대폰 브라우저는 한 문장을 말하는 동안에도 "오늘은" → "오늘은 개인정보" → … 처럼
+   * 앞부분을 포함한 확정 결과를 여러 번 보내는데, 이를 하나씩 내보내면 같은 자막이 반복되거나
+   * 한 단어씩 잘린다. 이어지는 결과면 갱신하고, 잠시 쉬거나 다른 문장이 오면 그때 한 줄로 확정한다.
    */
-  private emitFinal(raw: string) {
+  private stage(raw: string) {
     const text = raw.trim();
-    this.lastInterim = '';
     if (!text) return;
-    const recent = Date.now() - this.lastFinalAt < DUPLICATE_WINDOW_MS;
-    if (recent && norm(text) === norm(this.lastFinal)) return;
-    const fresh = this.withoutPrevious(text);
-    this.lastFinal = text;
-    this.lastFinalAt = Date.now();
-    if (fresh) this.finalCb(fresh);
+    const t = norm(text);
+    if (this.pending) {
+      const p = norm(this.pending);
+      if (t.startsWith(p)) this.pending = text; // 이어서 말한 부분까지 포함 → 갱신
+      else if (!p.startsWith(t)) {
+        this.commit(); // 다른 문장 → 앞 문장을 확정하고 새로 시작
+        this.pending = text;
+      } // 더 짧은 재전송은 무시
+    } else {
+      const recent = Date.now() - this.lastFinalAt < DUPLICATE_WINDOW_MS;
+      const prev = norm(this.lastFinal);
+      if (recent && prev.startsWith(t)) return; // 방금 확정한 문장(또는 그 앞부분)이 다시 옴
+      this.pending = text;
+    }
+    if (this.commitTimer) clearTimeout(this.commitTimer);
+    this.commitTimer = setTimeout(() => this.commit(), COMMIT_DELAY_MS);
   }
 
-  /** 직전 확정 문장으로 시작하면 그 부분을 뺀 나머지 (누적형 결과 대응) */
+  /** 붙잡아 둔 문장을 한 줄로 확정 (이미 확정한 앞부분은 빼고) */
+  private commit() {
+    if (this.commitTimer) clearTimeout(this.commitTimer);
+    this.commitTimer = null;
+    if (!this.pending) return;
+    const fresh = this.withoutPrevious(this.pending);
+    this.lastFinal = this.pending;
+    this.lastFinalAt = Date.now();
+    this.pending = '';
+    if (fresh) this.finalCb(fresh);
+    this.showInterim();
+  }
+
+  /** 흐린 글씨: 아직 확정 전인 문장 + 지금 말하는 중인 부분 (이미 보여 준 앞부분은 빼고) */
+  private showInterim() {
+    const pending = this.withoutPrevious(this.pending);
+    let live = this.withoutPrevious(this.rawInterim);
+    if (this.pending) live = stripPrefix(live, this.pending);
+    const text = [pending, live].filter(Boolean).join(' ');
+    if (text !== this.lastInterim) {
+      this.lastInterim = text;
+      this.interimCb(text);
+    }
+  }
+
+  /** 직전에 확정한 문장으로 시작하면 그 부분을 뺀 나머지 (누적형 결과 대응) */
   private withoutPrevious(text: string): string {
-    const prev = norm(this.lastFinal);
-    if (!prev || Date.now() - this.lastFinalAt > DUPLICATE_WINDOW_MS) return text;
-    const n = norm(text);
-    if (n === prev) return '';
-    if (!n.startsWith(prev)) return text;
-    // 공백·문장부호를 무시하고 앞 문장 길이만큼 건너뛴다
-    let seen = 0;
-    let i = 0;
-    for (; i < text.length && seen < prev.length; i++) if (!IGNORED.test(text[i]!)) seen++;
-    return text.slice(i).replace(/^[\s.,?!]+/, '').trim();
+    if (!this.lastFinal || Date.now() - this.lastFinalAt > DUPLICATE_WINDOW_MS) return text;
+    return stripPrefix(text, this.lastFinal);
   }
 
   private handleError(e: RecognitionErrorEvent) {
@@ -220,9 +263,11 @@ export class WebSpeechProvider implements SttProvider {
     }, this.restartDelay);
   }
 
+  /** 끝나거나 멈출 때 남아 있던 중간 결과도 버리지 않고 확정 후보로 넣는다 */
   private flushInterimAsFinal() {
-    const t = this.lastInterim;
-    this.lastInterim = '';
-    if (t) this.emitFinal(t);
+    const t = this.rawInterim;
+    this.rawInterim = '';
+    if (t) this.stage(t);
   }
+
 }
