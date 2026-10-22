@@ -5,9 +5,10 @@
  * 음성인식은 브라우저 내장 기능(구글·애플 서버)을 쓴다.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { randomId, RelayBridge, Room, type RoomDirectory, type ServerMessage, type ShareMessage } from '@caption/shared';
+import { randomId, RelayBridge, Room, type RoomDirectory, type RoomStats, type ServerMessage, type ShareMessage } from '@caption/shared';
 import { createCaptionStore } from '../../composables/useCaptionStore';
 import { useDictionary } from '../../composables/useDictionary';
+import { useSessionLog } from '../../composables/useSessionLog';
 import { usePreferences } from '../../composables/usePreferences';
 import { useWakeLock } from '../../composables/useWakeLock';
 import { createSttProvider } from '../../stt';
@@ -15,6 +16,7 @@ import { downloadCaptions } from '../../utils/download';
 import CaptionView from '../caption/CaptionView.vue';
 import DictionaryEditor from './DictionaryEditor.vue';
 import MicControls, { type MicState } from './MicControls.vue';
+import SessionLogPanel from './SessionLogPanel.vue';
 import SessionPanel from './SessionPanel.vue';
 import SurveyHostPanel from './SurveyHostPanel.vue';
 
@@ -47,6 +49,17 @@ useWakeLock(); // 폰 화면이 꺼지면 마이크가 멈추므로 켜 둔다
 
 const stt = createSttProvider('webspeech');
 const micState = ref<MicState>('idle');
+
+// 테스트 기록: 이 탭이 곧 방이라 통계를 바로 읽는다
+const sessionLog = useSessionLog({ code, mode: 'web', engine: 'webspeech' });
+stt.onDiag?.(sessionLog.stt);
+watch(micState, (s) => sessionLog.mic(s));
+const stats = ref<RoomStats>(room.getStats());
+const statsTimer = setInterval(() => (stats.value = room.getStats()), 5_000);
+function saveLog() {
+  stats.value = room.getStats();
+  sessionLog.download(stats.value, store.state.lines, { surveyResponses: store.state.surveyResponses.length });
+}
 const sttMessage = ref('');
 const localInterim = ref('');
 
@@ -124,6 +137,7 @@ onMounted(() => window.addEventListener('beforeunload', onBeforeUnload));
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', onBeforeUnload);
   void stt.stop();
+  clearInterval(statsTimer);
   bridge.dispose();
   room.dispose();
 });
@@ -179,6 +193,8 @@ onBeforeUnmount(() => {
         @saved="savedSurveyCount = store.state.surveyResponses.length"
       />
       <p v-if="unsavedSurvey" class="notice">웹 송출은 이 화면을 닫으면 설문 응답이 사라집니다. 닫기 전에 ‘설문 결과 저장’을 눌러 주세요.</p>
+
+      <SessionLogPanel :log="sessionLog" :stats="stats" @save="saveLog" />
 
       <DictionaryEditor :entries="dict.entries.value" @add="dict.add" @remove="dict.remove" />
     </aside>

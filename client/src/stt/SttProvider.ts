@@ -1,7 +1,7 @@
 /**
  * 음성인식 엔진 추상화.
  * - LocalSttProvider: 노트북 안에서 도는 엔진 (기본, 음성이 외부로 나가지 않음)
- * - WebSpeechProvider: 크롬 내장(Google 서버) — 개발·비교용
+ * - WebSpeechProvider: 크롬·사파리 내장(Google·Apple 서버) — 웹 송출용
  */
 export interface SttProvider {
   readonly isSupported: boolean;
@@ -14,6 +14,13 @@ export interface SttProvider {
   onError(cb: (err: SttError) => void): void;
   /** 사용할 마이크 (없으면 Windows 기본 마이크). 다음 start()부터 적용 */
   setDeviceId?(deviceId: string | null): void;
+  /** 진단용 이벤트 (테스트 기록): 인식이 실제로 듣기 시작/멈춤, 오류 */
+  onDiag?(cb: (e: SttDiag) => void): void;
+}
+
+export interface SttDiag {
+  type: 'listening' | 'stopped' | 'error';
+  detail?: string;
 }
 
 export interface SttError {

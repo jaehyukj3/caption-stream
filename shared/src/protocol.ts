@@ -25,6 +25,8 @@ export interface JoinMessage {
   hostToken?: string;
   /** 재연결 시 마지막으로 받은 seq. 이후 문장만 history로 받는다. */
   sinceSeq?: number;
+  /** 수신자 기기의 익명 ID (재접속해도 같은 사람으로 세기 위한 무작위 값, 이용 통계용) */
+  clientId?: string;
 }
 
 export interface InterimUpMessage {
@@ -53,7 +55,19 @@ export interface SurveyPromptUpMessage {
   type: 'surveyPrompt';
 }
 
-export type ClientMessage = JoinMessage | InterimUpMessage | FinalUpMessage | EndMessage | SurveyUpMessage | SurveyPromptUpMessage;
+/** 송출자 → 서버: 이용 통계 요청 (테스트 기록용) */
+export interface StatsRequestMessage {
+  type: 'statsRequest';
+}
+
+export type ClientMessage =
+  | JoinMessage
+  | InterimUpMessage
+  | FinalUpMessage
+  | EndMessage
+  | SurveyUpMessage
+  | SurveyPromptUpMessage
+  | StatsRequestMessage;
 
 // ───────── 서버 → 클라이언트 ─────────
 
@@ -123,6 +137,32 @@ export interface SurveyAckMessage {
   respondentId: string;
 }
 
+/** 수신자 한 명(기기)의 이용 기록. 익명 ID 외의 정보는 없다. */
+export interface ViewerStat {
+  id: string;
+  firstJoinAt: number;
+  lastSeenAt: number;
+  /** 접속해 있던 시간 합계 (ms) */
+  totalMs: number;
+  /** 접속 횟수 (재접속 포함) */
+  sessions: number;
+  connected: boolean;
+}
+
+/** 방 이용 통계: 송출자에게만 */
+export interface RoomStats {
+  createdAt: number;
+  now: number;
+  viewers: ViewerStat[];
+  /** 동시 접속자 수 변화 [시각, 인원] */
+  timeline: [number, number][];
+}
+
+export interface StatsMessage {
+  type: 'stats';
+  stats: RoomStats;
+}
+
 export type RelayState = 'off' | 'connecting' | 'online' | 'offline';
 
 export type ServerMessage =
@@ -136,6 +176,7 @@ export type ServerMessage =
   | SurveyResponsesMessage
   | SurveyPromptDownMessage
   | SurveyAckMessage
+  | StatsMessage
   | ErrorMessage;
 
 // ───────── HTTP API ─────────

@@ -39,7 +39,7 @@ export function openConnection(peer: Peer, rooms: RoomDirectory, opts: { allowHo
       }
       room = target;
       role = msg.role;
-      room.addPeer(peer, msg.role, msg.sinceSeq ?? 0);
+      room.addPeer(peer, msg.role, msg.sinceSeq ?? 0, msg.role === 'viewer' ? msg.clientId : undefined);
       return;
     }
 
@@ -52,6 +52,7 @@ export function openConnection(peer: Peer, rooms: RoomDirectory, opts: { allowHo
     }
     if (role !== 'host') return fail('NOT_HOST', '송출자만 보낼 수 있습니다.');
     if (msg.type === 'surveyPrompt') return room.requestSurvey(); // 종료 후에도 요청할 수 있다
+    if (msg.type === 'statsRequest') return peer.send(JSON.stringify({ type: 'stats', stats: room.getStats() } satisfies ServerMessage));
     if (room.ended) return fail('SESSION_ENDED', '이미 종료된 세션입니다.');
 
     switch (msg.type) {
@@ -105,12 +106,15 @@ function parse(raw: string): ClientMessage | null {
         role: m.role,
         hostToken: m.hostToken as string | undefined,
         sinceSeq: m.sinceSeq as number | undefined,
+        // 통계용 익명 ID는 형식이 틀리면 버리고 입장은 시킨다
+        clientId: typeof m.clientId === 'string' && /^[\w-]{8,64}$/.test(m.clientId) ? m.clientId : undefined,
       };
     case 'interim':
     case 'final':
       return isText(m.text) ? { type: m.type, text: m.text } : null;
     case 'end':
     case 'surveyPrompt':
+    case 'statsRequest':
       return { type: m.type };
     case 'survey': {
       if (typeof m.respondentId !== 'string' || !/^[\w-]{8,64}$/.test(m.respondentId)) return null;

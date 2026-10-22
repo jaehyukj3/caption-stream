@@ -1,5 +1,5 @@
 import { STT_PATH, STT_SAMPLE_RATE, type SttServerMessage } from '@caption/shared';
-import type { SttError, SttProvider } from './SttProvider';
+import type { SttDiag, SttError, SttProvider } from './SttProvider';
 
 /**
  * 마이크 소리를 16kHz PCM(Int16)으로 100ms씩 잘라 보내는 AudioWorklet.
@@ -62,6 +62,7 @@ export class LocalSttProvider implements SttProvider {
   private interimCb: (t: string) => void = () => {};
   private finalCb: (t: string) => void = () => {};
   private errorCb: (e: SttError) => void = () => {};
+  private diagCb: (e: SttDiag) => void = () => {};
 
   onInterim(cb: (text: string) => void) {
     this.interimCb = cb;
@@ -71,6 +72,9 @@ export class LocalSttProvider implements SttProvider {
   }
   onError(cb: (err: SttError) => void) {
     this.errorCb = cb;
+  }
+  onDiag(cb: (e: SttDiag) => void) {
+    this.diagCb = cb;
   }
 
   setDeviceId(deviceId: string | null) {
@@ -121,6 +125,7 @@ export class LocalSttProvider implements SttProvider {
         const msg = JSON.parse(ev.data as string) as SttServerMessage;
         switch (msg.type) {
           case 'ready':
+            this.diagCb({ type: 'listening' });
             settled = true;
             resolve();
             break;
@@ -137,6 +142,7 @@ export class LocalSttProvider implements SttProvider {
             this.flushWaiter = null;
             break;
           case 'error': {
+            this.diagCb({ type: 'error', detail: msg.code });
             const fatal = msg.code !== 'ENGINE_ERROR';
             const err = { fatal, code: msg.code, message: msg.message };
             if (!settled) {
@@ -155,6 +161,7 @@ export class LocalSttProvider implements SttProvider {
       ws.onclose = () => {
         if (this.ws !== ws) return;
         this.ws = null;
+        if (settled) this.diagCb({ type: 'stopped', detail: this.running ? 'disconnected' : undefined });
         if (!settled && initial) {
           settled = true;
           const message = '음성인식 엔진에 연결하지 못했습니다. 자막 서버(실행기 창)가 켜져 있는지 확인해 주세요.';

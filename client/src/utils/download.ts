@@ -11,7 +11,7 @@ export function captionsToText(lines: readonly CaptionLine[]): string {
   return lines.map((l) => `[${hms(l.ts)}] ${l.text}`).join('\r\n');
 }
 
-function stamp(): string {
+export function stamp(): string {
   const d = new Date();
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 }
@@ -26,9 +26,9 @@ export function downloadSurvey(responses: readonly SurveyResponse[], code: strin
   saveText(`survey_${code}_${stamp()}.csv`, surveyToCsv([...responses]), 'text/csv');
 }
 
-/** BOM을 붙여 윈도우 메모장·엑셀에서도 한글이 깨지지 않게 한다 */
-function saveText(filename: string, text: string, mime: string): void {
-  const blob = new Blob(['\ufeff', text], { type: `${mime};charset=utf-8` });
+/** 텍스트·CSV는 BOM을 붙여 윈도우 메모장·엑셀에서도 한글이 깨지지 않게 한다 (JSON은 붙이지 않음) */
+export function saveText(filename: string, text: string, mime: string): void {
+  const blob = new Blob([mime === 'application/json' ? '' : '\ufeff', text], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

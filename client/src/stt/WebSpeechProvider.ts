@@ -1,4 +1,4 @@
-import type { SttError, SttProvider } from './SttProvider';
+import type { SttDiag, SttError, SttProvider } from './SttProvider';
 
 // Web Speech API는 TS DOM 타입에 없거나 버전마다 달라 필요한 부분만 선언한다.
 interface RecognitionResult {
@@ -21,6 +21,7 @@ interface Recognition {
   onresult: ((e: RecognitionEvent) => void) | null;
   onerror: ((e: RecognitionErrorEvent) => void) | null;
   onend: (() => void) | null;
+  onstart: (() => void) | null;
   start(): void;
   stop(): void;
   abort(): void;
@@ -86,6 +87,7 @@ export class WebSpeechProvider implements SttProvider {
   private interimCb: (t: string) => void = () => {};
   private finalCb: (t: string) => void = () => {};
   private errorCb: (e: SttError) => void = () => {};
+  private diagCb: (e: SttDiag) => void = () => {};
 
   constructor(private readonly lang = 'ko-KR') {}
 
@@ -97,6 +99,9 @@ export class WebSpeechProvider implements SttProvider {
   }
   onError(cb: (err: SttError) => void) {
     this.errorCb = cb;
+  }
+  onDiag(cb: (e: SttDiag) => void) {
+    this.diagCb = cb;
   }
 
   async start(): Promise<void> {
@@ -118,6 +123,7 @@ export class WebSpeechProvider implements SttProvider {
     rec.onresult = (e) => this.handleResult(e);
     rec.onerror = (e) => this.handleError(e);
     rec.onend = () => this.handleEnd();
+    rec.onstart = () => this.diagCb({ type: 'listening' });
     this.rec = rec;
     this.startRecognition();
   }
@@ -130,6 +136,7 @@ export class WebSpeechProvider implements SttProvider {
     this.rec = null;
     if (rec) {
       rec.onend = null;
+      rec.onstart = null;
       rec.onresult = null;
       rec.onerror = null;
       rec.abort();
@@ -230,6 +237,7 @@ export class WebSpeechProvider implements SttProvider {
   }
 
   private handleError(e: RecognitionErrorEvent) {
+    if (e.error !== 'aborted') this.diagCb({ type: 'error', detail: e.error });
     // no-speech(침묵), aborted(재시작 과정)는 정상 흐름이다
     if (e.error === 'no-speech' || e.error === 'aborted') return;
 
@@ -249,6 +257,7 @@ export class WebSpeechProvider implements SttProvider {
   }
 
   private handleEnd() {
+    this.diagCb({ type: 'stopped' });
     // 크롬은 확정되지 않은 중간 결과를 남긴 채 끝나기도 한다. 버리지 않고 확정으로 처리.
     this.flushInterimAsFinal();
     if (!this.running) return;

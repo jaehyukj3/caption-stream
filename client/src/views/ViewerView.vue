@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { isValidRoomCode } from '@caption/shared';
+import { isValidRoomCode, randomId } from '@caption/shared';
 import CaptionView from '../components/caption/CaptionView.vue';
 import SurveyForm from '../components/viewer/SurveyForm.vue';
 import ViewerToolbar from '../components/viewer/ViewerToolbar.vue';
@@ -19,6 +19,13 @@ const relayRid = new URLSearchParams(location.search).get('r');
 const relayKey = new URLSearchParams(location.hash.slice(1)).get('k');
 const relay = relayRid && relayKey ? { rid: relayRid, key: relayKey } : undefined;
 const store = createCaptionStore();
+/** 이 기기의 익명 ID: 재접속해도 같은 사람으로 세기 위한 무작위 값 (이름·기기 정보 없음) */
+const CLIENT_ID_KEY = 'caption.clientId';
+let clientId = readJson<string>(localStorage, CLIENT_ID_KEY, '');
+if (!/^[\w-]{8,64}$/.test(clientId)) {
+  clientId = randomId(12);
+  writeJson(localStorage, CLIENT_ID_KEY, clientId);
+}
 const { prefs, biggerFont, smallerFont, toggleTheme } = usePreferences(22);
 const socket = validCode
   ? useRoomSocket({
@@ -27,6 +34,7 @@ const socket = validCode
       getSinceSeq: () => store.lastSeq.value,
       onMessage: store.apply,
       relay,
+      clientId,
     })
   : null;
 useWakeLock();

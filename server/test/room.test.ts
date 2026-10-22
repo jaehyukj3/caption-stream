@@ -118,3 +118,21 @@ test('설문: 종료 후에도 참석자 응답을 받아 송출자에게만 전
   room.addPeer(host2, 'host');
   assert.equal(host2.of('surveyResponses')[0]!.responses.length, 1);
 });
+
+test('이용 통계: 같은 기기의 재접속은 한 사람으로 세고, 접속 시간과 동시 접속자 변화를 기록한다', () => {
+  const room = new Room('123456', 'tok');
+  const a1 = new FakePeer();
+  const a2 = new FakePeer();
+  const b = new FakePeer();
+  room.addPeer(new FakePeer(), 'host');
+  room.addPeer(a1, 'viewer', 0, 'device-aaaa');
+  room.addPeer(b, 'viewer'); // ID 없이 접속 → 익명으로 따로 센다
+  room.removePeer(a1);
+  room.addPeer(a2, 'viewer', 0, 'device-aaaa'); // 같은 기기 재접속
+  const s = room.getStats();
+  assert.equal(s.viewers.length, 2);
+  const a = s.viewers.find((v) => v.id === 'device-aaaa')!;
+  assert.equal(a.sessions, 2);
+  assert.equal(a.connected, true);
+  assert.deepEqual(s.timeline.map(([, n]) => n), [0, 1, 2, 1, 2]);
+});

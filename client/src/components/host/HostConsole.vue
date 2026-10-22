@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
-import { INTERIM_MIN_INTERVAL_MS, type ShareMessage } from '@caption/shared';
+import { INTERIM_MIN_INTERVAL_MS, type RoomStats, type ShareMessage } from '@caption/shared';
 import { createCaptionStore } from '../../composables/useCaptionStore';
 import { useDictionary } from '../../composables/useDictionary';
 import { useMicLevel } from '../../composables/useMicLevel';
 import { usePreferences } from '../../composables/usePreferences';
 import { useRoomSocket } from '../../composables/useRoomSocket';
-import { createSttProvider } from '../../stt';
+import { useSessionLog } from '../../composables/useSessionLog';
+import { createSttProvider, sttKindFromUrl } from '../../stt';
 import { downloadCaptions } from '../../utils/download';
 import { throttle } from '../../utils/throttle';
 import CaptionView from '../caption/CaptionView.vue';
@@ -14,6 +15,7 @@ import DictionaryEditor from './DictionaryEditor.vue';
 import FloatingCaptionButton from './FloatingCaptionButton.vue';
 import MicControls, { type MicDevice, type MicState } from './MicControls.vue';
 import { readJson, writeJson } from '../../utils/storage';
+import SessionLogPanel from './SessionLogPanel.vue';
 import SessionPanel from './SessionPanel.vue';
 import SurveyHostPanel from './SurveyHostPanel.vue';
 
@@ -23,6 +25,9 @@ const emit = defineEmits<{ newSession: []; invalid: [] }>();
 const store = createCaptionStore();
 /** 중계 서버 상태와 LTE 참석자용 주소 (서버가 송출자에게만 알려 줌) */
 const share = ref<ShareMessage | null>(null);
+/** 방 이용 통계 (테스트 기록). 서버에 주기적으로 물어본다. */
+const stats = ref<RoomStats | null>(null);
+let saveWhenStats = false;
 const socket = useRoomSocket({
   code: props.code,
   role: 'host',
@@ -30,6 +35,10 @@ const socket = useRoomSocket({
   getSinceSeq: () => store.lastSeq.value,
   onMessage: (msg) => {
     if (msg.type === 'share') share.value = msg;
+    if (msg.type === 'stats') {
+      stats.value = msg.stats;
+      if (saveWhenStats) saveLog();
+    }
     store.apply(msg);
   },
 });
@@ -39,8 +48,25 @@ const mic = useMicLevel();
 
 // STT 엔진 교체 지점: 기본은 노트북 안의 로컬 엔진 (stt/index.ts)
 const stt = createSttProvider();
+const sessionLog = useSessionLog({ code: props.code, mode: 'laptop', engine: sttKindFromUrl() === 'local' ? 'sensevoice' : 'webspeech' });
+stt.onDiag?.(sessionLog.stt);
 
 const micState = ref<MicState>('idle');
+watch(micState, (s) => sessionLog.mic(s));
+
+const statsTimer = setInterval(() => socket.status.value === 'live' && socket.send({ type: 'statsRequest' }), 15_000);
+watch(socket.status, (s) => s === 'live' && socket.send({ type: 'statsRequest' }));
+
+/** 최신 통계를 받아서 저장 (연결이 끊겨 있으면 마지막으로 받은 통계로) */
+function requestSaveLog() {
+  if (socket.status.value !== 'live') return saveLog();
+  saveWhenStats = true;
+  socket.send({ type: 'statsRequest' });
+}
+function saveLog() {
+  saveWhenStats = false;
+  sessionLog.download(stats.value, store.state.lines, { surveyResponses: store.state.surveyResponses.length });
+}
 
 // 마이크 선택 (USB 오디오 어댑터로 앰프 출력을 받는 경우 등). 기기별로 기억한다.
 const MIC_KEY = 'caption.micDeviceId';
@@ -170,6 +196,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', onBeforeUnload);
   navigator.mediaDevices?.removeEventListener('devicechange', refreshDevices);
   void stt.stop();
+  clearInterval(statsTimer);
 });
 </script>
 
@@ -230,6 +257,8 @@ onBeforeUnmount(() => {
         :viewer-count="store.state.viewerCount"
         @request="socket.send({ type: 'surveyPrompt' })"
       />
+
+      <SessionLogPanel :log="sessionLog" :stats="stats" @save="requestSaveLog" />
 
       <DictionaryEditor :entries="dict.entries.value" @add="dict.add" @remove="dict.remove" />
     </aside>

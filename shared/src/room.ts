@@ -5,6 +5,7 @@ import {
   type CaptionLine,
   type RelayState,
   type Role,
+  type RoomStats,
   type ServerMessage,
   type ShareMessage,
 } from './protocol.js';
@@ -28,6 +29,13 @@ export class Room {
   private readonly surveys = new Map<string, SurveyResponse>();
   /** 송출자가 설문을 요청했는지 (이후 들어오는 참석자에게도 알린다) */
   surveyRequested = false;
+
+  // 이용 통계 (테스트 기록용): 접속 중인 수신자 → 익명 ID와 접속 시각, 익명 ID → 누적 기록
+  readonly createdAt = Date.now();
+  private readonly viewerSessions = new Map<Peer, { id: string; since: number }>();
+  private readonly viewerStats = new Map<string, { firstJoinAt: number; lastSeenAt: number; totalMs: number; sessions: number }>();
+  private readonly timeline: [number, number][] = [];
+  private anonCount = 0;
 
   /** 송출자가 마지막으로 접속해 있었던 시각 (만료 계산 기준) */
   private lastHostSeenAt = Date.now();
@@ -53,9 +61,10 @@ export class Room {
     return this.nextSeq - 1;
   }
 
-  addPeer(peer: Peer, role: Role, sinceSeq = 0): void {
+  addPeer(peer: Peer, role: Role, sinceSeq = 0, clientId?: string): void {
     (role === 'host' ? this.hosts : this.viewers).add(peer);
     if (role === 'host') this.lastHostSeenAt = Date.now();
+    else this.trackJoin(peer, clientId);
 
     send(peer, { type: 'joined', role, code: this.code, ended: this.ended });
     if (role === 'host') {
@@ -74,7 +83,49 @@ export class Room {
 
   removePeer(peer: Peer): void {
     if (this.hosts.delete(peer)) this.lastHostSeenAt = Date.now();
-    if (this.viewers.delete(peer)) this.broadcastViewerCount();
+    if (this.viewers.delete(peer)) {
+      this.trackLeave(peer);
+      this.broadcastViewerCount();
+    }
+  }
+
+  /** 이용 통계. 수신자는 기기별 익명 ID로만 구분된다. */
+  getStats(now = Date.now()): RoomStats {
+    const open = new Map<string, number>();
+    for (const { id, since } of this.viewerSessions.values()) open.set(id, (open.get(id) ?? 0) + now - since);
+    return {
+      createdAt: this.createdAt,
+      now,
+      viewers: [...this.viewerStats].map(([id, v]) => ({
+        id,
+        firstJoinAt: v.firstJoinAt,
+        lastSeenAt: open.has(id) ? now : v.lastSeenAt,
+        totalMs: v.totalMs + (open.get(id) ?? 0),
+        sessions: v.sessions,
+        connected: open.has(id),
+      })),
+      timeline: [...this.timeline],
+    };
+  }
+
+  private trackJoin(peer: Peer, clientId: string | undefined): void {
+    const now = Date.now();
+    const id = clientId ?? `anon-${++this.anonCount}`;
+    this.viewerSessions.set(peer, { id, since: now });
+    const v = this.viewerStats.get(id);
+    if (v) v.sessions++;
+    else if (this.viewerStats.size < MAX_TRACKED_VIEWERS) this.viewerStats.set(id, { firstJoinAt: now, lastSeenAt: now, totalMs: 0, sessions: 1 });
+  }
+
+  private trackLeave(peer: Peer): void {
+    const s = this.viewerSessions.get(peer);
+    if (!s) return;
+    this.viewerSessions.delete(peer);
+    const v = this.viewerStats.get(s.id);
+    if (!v) return;
+    const now = Date.now();
+    v.totalMs += now - s.since;
+    v.lastSeenAt = now;
   }
 
   /**
@@ -169,6 +220,8 @@ export class Room {
   }
 
   private broadcastViewerCount(): void {
+    const last = this.timeline.at(-1);
+    if (last?.[1] !== this.viewers.size && this.timeline.length < MAX_TIMELINE) this.timeline.push([Date.now(), this.viewers.size]);
     this.broadcast({ type: 'viewerCount', count: this.viewers.size }, true);
   }
 
@@ -178,6 +231,9 @@ export class Room {
     if (includeHosts) for (const h of this.hosts) h.send(data);
   }
 }
+
+const MAX_TRACKED_VIEWERS = 2000;
+const MAX_TIMELINE = 50_000;
 
 function send(peer: Peer, msg: ServerMessage): void {
   peer.send(JSON.stringify(msg));

@@ -25,6 +25,8 @@ export interface RoomSocketOptions {
    * 키는 주소의 # 뒤에서 오며 서버로 전송되지 않는다.
    */
   relay?: { rid: string; key: string };
+  /** 수신자 기기의 익명 ID (이용 통계용) */
+  clientId?: string;
 }
 
 const RELAY_PING_MS = 30_000;
@@ -104,6 +106,7 @@ export function useRoomSocket(opts: RoomSocketOptions) {
         role: opts.role,
         hostToken: opts.hostToken,
         sinceSeq: opts.getSinceSeq(),
+        clientId: opts.clientId,
       });
       if (keyPromise) {
         if (pingTimer) clearInterval(pingTimer);
