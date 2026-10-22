@@ -42,9 +42,9 @@ function save() {
   <section class="card survey">
     <h2>설문</h2>
     <p class="muted hint">
-      참석자 휴대폰 자막 화면에 설문이 뜹니다. 강의를 종료하면 자동으로 안내되고, 강의 중에도 아래 버튼으로 요청할 수 있습니다.
+      아래 버튼을 누르면 참석자 휴대폰 자막 화면에 설문이 뜹니다. 누르지 않으면 설문은 나오지 않습니다(강의 종료 전후 모두 가능).
     </p>
-    <button type="button" class="btn" :class="{ 'btn-primary': ended && !requested }" @click="request">
+    <button type="button" class="btn" @click="request">
       {{ requested ? '설문 요청 다시 보내기' : '참석자에게 설문 요청' }}
     </button>
 

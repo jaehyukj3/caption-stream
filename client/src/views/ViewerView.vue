@@ -39,10 +39,10 @@ const banner = computed<{ kind: 'info' | 'error'; text: string } | null>(() => {
   return null;
 });
 
-// 설문: 강의가 끝나거나 강사가 요청하면 안내. 요청이 오면 한 번 자동으로 연다.
+// 설문: 강사가 요청했을 때만 안내한다(종료만으로는 띄우지 않음). 요청이 오면 한 번 자동으로 연다.
 const surveyOpen = ref(false);
 const surveySending = ref(false);
-const surveyOffered = computed(() => !!socket && socket.status.value !== 'failed' && (store.state.ended || store.state.surveyRequested));
+const surveyOffered = computed(() => !!socket && socket.status.value !== 'failed' && store.state.surveyRequested);
 watch(
   () => store.state.surveyRequested,
   (req) => req && !store.state.surveySubmitted && (surveyOpen.value = true),
