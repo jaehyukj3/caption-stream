@@ -15,6 +15,7 @@ import FloatingCaptionButton from './FloatingCaptionButton.vue';
 import MicControls, { type MicDevice, type MicState } from './MicControls.vue';
 import { readJson, writeJson } from '../../utils/storage';
 import SessionPanel from './SessionPanel.vue';
+import SurveyHostPanel from './SurveyHostPanel.vue';
 
 const props = defineProps<{ code: string; hostToken: string }>();
 const emit = defineEmits<{ newSession: []; invalid: [] }>();
@@ -211,7 +212,7 @@ onBeforeUnmount(() => {
 
       <div v-if="micState === 'ended'" class="card ended">
         <strong>세션이 종료되었습니다.</strong>
-        <p class="muted">수신자는 2시간 동안 자막 이력을 계속 보고 다운로드할 수 있습니다.</p>
+        <p class="muted">수신자는 2시간 동안 자막 이력을 계속 보고 다운로드할 수 있고, 설문 응답도 계속 받습니다.</p>
         <button type="button" class="btn btn-primary" @click="emit('newSession')">새 세션 만들기</button>
       </div>
 
@@ -221,6 +222,14 @@ onBeforeUnmount(() => {
         <FloatingCaptionButton :source="pipSource" :font-size="prefs.fontSize" />
         <button type="button" class="btn" :disabled="!store.state.lines.length" @click="downloadCaptions(store.state.lines, code)">⤓ 자막 저장(.txt)</button>
       </div>
+
+      <SurveyHostPanel
+        :code="code"
+        :responses="store.state.surveyResponses"
+        :ended="store.state.ended"
+        :viewer-count="store.state.viewerCount"
+        @request="socket.send({ type: 'surveyPrompt' })"
+      />
 
       <DictionaryEditor :entries="dict.entries.value" @add="dict.add" @remove="dict.remove" />
     </aside>

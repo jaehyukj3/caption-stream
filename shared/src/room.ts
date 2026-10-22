@@ -8,6 +8,7 @@ import {
   type ServerMessage,
   type ShareMessage,
 } from './protocol.js';
+import { MAX_SURVEY_RESPONSES, type SurveyResponse } from './survey.js';
 
 /** 방에 붙는 연결. ws.WebSocket을 그대로 넘겨도 되고 테스트에서는 가짜 객체를 쓴다. */
 export interface Peer {
@@ -23,6 +24,10 @@ export class Room {
   private share: ShareMessage = { type: 'share', relay: 'off', relayViewerUrl: null };
   private readonly viewers = new Set<Peer>();
   private nextSeq = 1;
+  /** 설문 응답 (참석자 기기별 익명 ID → 마지막 응답). 송출자에게만 보낸다. */
+  private readonly surveys = new Map<string, SurveyResponse>();
+  /** 송출자가 설문을 요청했는지 (이후 들어오는 참석자에게도 알린다) */
+  surveyRequested = false;
 
   /** 송출자가 마지막으로 접속해 있었던 시각 (만료 계산 기준) */
   private lastHostSeenAt = Date.now();
@@ -53,13 +58,17 @@ export class Room {
     if (role === 'host') this.lastHostSeenAt = Date.now();
 
     send(peer, { type: 'joined', role, code: this.code, ended: this.ended });
-    if (role === 'host') send(peer, this.share);
+    if (role === 'host') {
+      send(peer, this.share);
+      send(peer, { type: 'surveyResponses', responses: [...this.surveys.values()] });
+    }
     send(peer, { type: 'history', lines: sinceSeq > 0 ? this.lines.filter((l) => l.seq > sinceSeq) : this.lines });
     if (this.ended) {
       send(peer, { type: 'sessionEnd' });
     } else if (role === 'viewer' && this.currentInterim) {
       send(peer, { type: 'interim', text: this.currentInterim });
     }
+    if (role === 'viewer' && this.surveyRequested) send(peer, { type: 'surveyPrompt' });
     this.broadcastViewerCount();
   }
 
@@ -104,6 +113,22 @@ export class Room {
     this.ended = true;
     this.endedAt = Date.now();
     this.broadcast({ type: 'sessionEnd' }, true);
+  }
+
+  /** 설문 응답 저장 후 송출자에게 전달. 같은 참석자가 다시 내면 덮어쓴다. */
+  addSurvey(from: Peer, respondentId: string, answers: SurveyResponse['answers']): void {
+    if (!this.surveys.has(respondentId) && this.surveys.size >= MAX_SURVEY_RESPONSES) return;
+    const response: SurveyResponse = { respondentId, answers, submittedAt: Date.now() };
+    this.surveys.set(respondentId, response);
+    send(from, { type: 'surveyAck', respondentId });
+    const data = JSON.stringify({ type: 'surveyResponses', responses: [response] } satisfies ServerMessage);
+    for (const h of this.hosts) h.send(data);
+  }
+
+  /** 접속해 있는 참석자 모두에게 설문 참여를 요청 */
+  requestSurvey(): void {
+    this.surveyRequested = true;
+    this.broadcast({ type: 'surveyPrompt' }, false);
   }
 
   setShare(relay: RelayState, relayViewerUrl: string | null): void {

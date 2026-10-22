@@ -16,6 +16,7 @@ import CaptionView from '../caption/CaptionView.vue';
 import DictionaryEditor from './DictionaryEditor.vue';
 import MicControls, { type MicState } from './MicControls.vue';
 import SessionPanel from './SessionPanel.vue';
+import SurveyHostPanel from './SurveyHostPanel.vue';
 
 const emit = defineEmits<{ newSession: [] }>();
 
@@ -109,10 +110,16 @@ watch(
   (ended) => ended && (micState.value = 'ended'),
 );
 
-// 이 탭이 곧 송출 서버라서, 닫거나 새로고침하면 자막이 끝난다
+// 이 탭이 곧 송출 서버라서, 닫거나 새로고침하면 자막과 설문 응답이 사라진다
+const savedSurveyCount = ref(0);
+const unsavedSurvey = computed(() => store.state.surveyResponses.length > savedSurveyCount.value);
 const onBeforeUnload = (e: BeforeUnloadEvent) => {
-  if (!store.state.ended) e.preventDefault();
+  if (!store.state.ended || unsavedSurvey.value) e.preventDefault();
 };
+function newSession() {
+  if (unsavedSurvey.value && !window.confirm('저장하지 않은 설문 응답이 사라집니다. 새 세션을 만들까요?')) return;
+  emit('newSession');
+}
 onMounted(() => window.addEventListener('beforeunload', onBeforeUnload));
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', onBeforeUnload);
@@ -153,7 +160,8 @@ onBeforeUnmount(() => {
 
       <div v-if="micState === 'ended'" class="card ended">
         <strong>세션이 종료되었습니다.</strong>
-        <button type="button" class="btn btn-primary" @click="emit('newSession')">새 세션 만들기</button>
+        <p class="muted">이 화면을 열어 두는 동안 참석자 설문 응답을 계속 받습니다.</p>
+        <button type="button" class="btn btn-primary" @click="newSession">새 세션 만들기</button>
       </div>
 
       <SessionPanel :code="code" :share="share" :lan="false" />
@@ -161,6 +169,16 @@ onBeforeUnmount(() => {
       <div class="tools">
         <button type="button" class="btn" :disabled="!store.state.lines.length" @click="downloadCaptions(store.state.lines, code)">⤓ 자막 저장(.txt)</button>
       </div>
+
+      <SurveyHostPanel
+        :code="code"
+        :responses="store.state.surveyResponses"
+        :ended="store.state.ended"
+        :viewer-count="store.state.viewerCount"
+        @request="room.requestSurvey()"
+        @saved="savedSurveyCount = store.state.surveyResponses.length"
+      />
+      <p v-if="unsavedSurvey" class="notice">웹 송출은 이 화면을 닫으면 설문 응답이 사라집니다. 닫기 전에 ‘설문 결과 저장’을 눌러 주세요.</p>
 
       <DictionaryEditor :entries="dict.entries.value" @add="dict.add" @remove="dict.remove" />
     </aside>
@@ -234,6 +252,13 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   border-color: var(--accent);
+}
+.ended p {
+  margin: 0;
+  font-size: 14px;
+}
+.side > .notice {
+  margin: 0;
 }
 @media (max-width: 900px) {
   .console {

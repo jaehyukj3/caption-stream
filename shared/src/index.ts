@@ -4,3 +4,4 @@ export * from './e2e.js';
 export * from './room.js';
 export * from './connection.js';
 export * from './relayBridge.js';
+export * from './survey.js';

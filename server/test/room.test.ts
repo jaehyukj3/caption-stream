@@ -80,3 +80,41 @@ test('송출자가 없거나 종료 후 2시간이 지나면 만료', () => {
   assert.equal(ended.isExpired(Date.now() + ROOM_TTL_MS + 1000), true);
   assert.equal(ended.pushFinal('무시'), null);
 });
+
+test('설문: 종료 후에도 참석자 응답을 받아 송출자에게만 전달하고, 형식이 틀리면 거부한다', async () => {
+  const { openConnection, susScore } = await import('@caption/shared');
+  const room = new Room('123456', 'tok');
+  const rooms = { get: (c: string) => (c === '123456' ? room : undefined), verifyHost: (_r: Room, t?: string) => t === 'tok' };
+  const host = new FakePeer();
+  const viewer = new FakePeer();
+  const other = new FakePeer();
+  const h = openConnection(host, rooms, { allowHost: true });
+  const v = openConnection(viewer, rooms, { allowHost: true });
+  const o = openConnection(other, rooms, { allowHost: true });
+  h.handleRaw(JSON.stringify({ type: 'join', code: '123456', role: 'host', hostToken: 'tok' }));
+  v.handleRaw(JSON.stringify({ type: 'join', code: '123456', role: 'viewer' }));
+  h.handleRaw(JSON.stringify({ type: 'end' }));
+  h.handleRaw(JSON.stringify({ type: 'surveyPrompt' }));
+  assert.equal(viewer.of('surveyPrompt').length, 1);
+  // 요청 이후 들어온 참석자도 요청을 받는다
+  o.handleRaw(JSON.stringify({ type: 'join', code: '123456', role: 'viewer' }));
+  assert.equal(other.of('surveyPrompt').length, 1);
+
+  const answers: Record<string, number | string> = { comment: '좋아요', hearing: 1 };
+  for (let i = 1; i <= 5; i++) answers[`e${i}`] = 4;
+  for (let i = 1; i <= 10; i++) answers[`s${i}`] = i % 2 ? 5 : 1;
+  v.handleRaw(JSON.stringify({ type: 'survey', respondentId: 'abcdefgh12', answers: { ...answers, s3: 9 } }));
+  assert.equal(viewer.of('error').at(-1)!.code, 'BAD_MESSAGE');
+  v.handleRaw(JSON.stringify({ type: 'survey', respondentId: 'abcdefgh12', answers }));
+  v.handleRaw(JSON.stringify({ type: 'survey', respondentId: 'abcdefgh12', answers })); // 다시 내면 덮어쓴다
+  assert.equal(viewer.of('surveyAck').length, 2);
+  assert.equal(other.of('surveyResponses').length, 0);
+  const got = host.of('surveyResponses').flatMap((m) => m.responses);
+  assert.equal(got.at(-1)!.answers.comment, '좋아요');
+  assert.equal(susScore(got.at(-1)!.answers), 100);
+
+  // 송출자가 다시 접속하면 응답 전체(중복 없이)를 받는다
+  const host2 = new FakePeer();
+  room.addPeer(host2, 'host');
+  assert.equal(host2.of('surveyResponses')[0]!.responses.length, 1);
+});

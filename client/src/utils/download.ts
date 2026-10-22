@@ -1,4 +1,4 @@
-import type { CaptionLine } from '@caption/shared';
+import { surveyToCsv, type CaptionLine, type SurveyResponse } from '@caption/shared';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -11,15 +11,28 @@ export function captionsToText(lines: readonly CaptionLine[]): string {
   return lines.map((l) => `[${hms(l.ts)}] ${l.text}`).join('\r\n');
 }
 
-/** 자막 전체를 .txt로 저장. BOM을 붙여 윈도우 메모장에서도 한글이 깨지지 않게 한다. */
-export function downloadCaptions(lines: readonly CaptionLine[], code: string): void {
+function stamp(): string {
   const d = new Date();
-  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
-  const blob = new Blob(['﻿', captionsToText(lines), '\r\n'], { type: 'text/plain;charset=utf-8' });
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+}
+
+/** 자막 전체를 .txt로 저장 */
+export function downloadCaptions(lines: readonly CaptionLine[], code: string): void {
+  saveText(`captions_${code}_${stamp()}.txt`, captionsToText(lines) + '\r\n', 'text/plain');
+}
+
+/** 설문 응답을 엑셀에서 바로 열리는 .csv로 저장 */
+export function downloadSurvey(responses: readonly SurveyResponse[], code: string): void {
+  saveText(`survey_${code}_${stamp()}.csv`, surveyToCsv([...responses]), 'text/csv');
+}
+
+/** BOM을 붙여 윈도우 메모장·엑셀에서도 한글이 깨지지 않게 한다 */
+function saveText(filename: string, text: string, mime: string): void {
+  const blob = new Blob(['\ufeff', text], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `captions_${code}_${stamp}.txt`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();

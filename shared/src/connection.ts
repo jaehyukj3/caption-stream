@@ -6,6 +6,7 @@ import {
   type Role,
   type ServerMessage,
 } from './protocol.js';
+import { sanitizeSurveyAnswers } from './survey.js';
 import type { Peer, Room } from './room.js';
 
 /** 코드로 방을 찾고 송출 권한을 확인하는 곳 (노트북 서버: RoomManager, 웹 송출: 방 하나) */
@@ -43,7 +44,14 @@ export function openConnection(peer: Peer, rooms: RoomDirectory, opts: { allowHo
     }
 
     if (!room) return fail('NOT_JOINED', 'join first');
+    // 설문 응답은 참석자가 보내며, 강의가 끝난 뒤에도 받는다
+    if (msg.type === 'survey') {
+      if (role !== 'viewer') return fail('BAD_MESSAGE', '참석자만 응답할 수 있습니다.');
+      room.addSurvey(peer, msg.respondentId, msg.answers);
+      return;
+    }
     if (role !== 'host') return fail('NOT_HOST', '송출자만 보낼 수 있습니다.');
+    if (msg.type === 'surveyPrompt') return room.requestSurvey(); // 종료 후에도 요청할 수 있다
     if (room.ended) return fail('SESSION_ENDED', '이미 종료된 세션입니다.');
 
     switch (msg.type) {
@@ -102,7 +110,13 @@ function parse(raw: string): ClientMessage | null {
     case 'final':
       return isText(m.text) ? { type: m.type, text: m.text } : null;
     case 'end':
-      return { type: 'end' };
+    case 'surveyPrompt':
+      return { type: m.type };
+    case 'survey': {
+      if (typeof m.respondentId !== 'string' || !/^[\w-]{8,64}$/.test(m.respondentId)) return null;
+      const answers = sanitizeSurveyAnswers(m.answers);
+      return answers ? { type: 'survey', respondentId: m.respondentId, answers } : null;
+    }
     default:
       return null;
   }

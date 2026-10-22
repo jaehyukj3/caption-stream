@@ -3,6 +3,8 @@
  * 모든 메시지는 JSON 텍스트 프레임이며 `type` 필드로 구분한다.
  */
 
+import type { SurveyResponse } from './survey.js';
+
 /** 확정된 자막 한 줄. seq는 방 안에서 1부터 단조 증가한다. */
 export interface CaptionLine {
   seq: number;
@@ -39,7 +41,19 @@ export interface EndMessage {
   type: 'end';
 }
 
-export type ClientMessage = JoinMessage | InterimUpMessage | FinalUpMessage | EndMessage;
+/** 참석자 → 송출자: 설문 응답 (세션 종료 후에도 보낼 수 있다) */
+export interface SurveyUpMessage {
+  type: 'survey';
+  respondentId: string;
+  answers: Record<string, number | string>;
+}
+
+/** 송출자 → 참석자 전체: 설문 참여 요청 */
+export interface SurveyPromptUpMessage {
+  type: 'surveyPrompt';
+}
+
+export type ClientMessage = JoinMessage | InterimUpMessage | FinalUpMessage | EndMessage | SurveyUpMessage | SurveyPromptUpMessage;
 
 // ───────── 서버 → 클라이언트 ─────────
 
@@ -94,6 +108,21 @@ export interface ShareMessage {
   relayViewerUrl: string | null;
 }
 
+/** 송출자에게만: 설문 응답 (입장 시 전체, 이후 새로 들어온 것) */
+export interface SurveyResponsesMessage {
+  type: 'surveyResponses';
+  responses: SurveyResponse[];
+}
+
+/** 참석자에게: 설문 참여 요청 / 응답 접수 확인 */
+export interface SurveyPromptDownMessage {
+  type: 'surveyPrompt';
+}
+export interface SurveyAckMessage {
+  type: 'surveyAck';
+  respondentId: string;
+}
+
 export type RelayState = 'off' | 'connecting' | 'online' | 'offline';
 
 export type ServerMessage =
@@ -104,6 +133,9 @@ export type ServerMessage =
   | FinalDownMessage
   | ViewerCountMessage
   | SessionEndMessage
+  | SurveyResponsesMessage
+  | SurveyPromptDownMessage
+  | SurveyAckMessage
   | ErrorMessage;
 
 // ───────── HTTP API ─────────

@@ -1,5 +1,5 @@
 import { computed, reactive } from 'vue';
-import type { CaptionLine, ServerMessage } from '@caption/shared';
+import type { CaptionLine, ServerMessage, SurveyResponse } from '@caption/shared';
 
 /**
  * 자막 상태. 송출자 화면, 수신자 화면, PiP 창이 같은 객체를 공유한다.
@@ -11,6 +11,12 @@ export function createCaptionStore() {
     interim: '',
     ended: false,
     viewerCount: 0,
+    /** 참석자: 송출자가 설문을 요청함 */
+    surveyRequested: false,
+    /** 참석자: 응답이 접수됨 */
+    surveySubmitted: false,
+    /** 송출자: 받은 설문 응답 (기기별 마지막 응답) */
+    surveyResponses: [] as SurveyResponse[],
   });
 
   const lastSeq = computed(() => state.lines.at(-1)?.seq ?? 0);
@@ -44,6 +50,18 @@ export function createCaptionStore() {
         state.ended = true;
         state.interim = '';
         break;
+      case 'surveyPrompt':
+        state.surveyRequested = true;
+        break;
+      case 'surveyAck':
+        state.surveySubmitted = true;
+        break;
+      case 'surveyResponses': {
+        const byId = new Map(state.surveyResponses.map((r) => [r.respondentId, r]));
+        for (const r of msg.responses) byId.set(r.respondentId, r);
+        state.surveyResponses = [...byId.values()];
+        break;
+      }
     }
   }
 

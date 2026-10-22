@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { isValidRoomCode } from '@caption/shared';
 import CaptionView from '../components/caption/CaptionView.vue';
+import SurveyForm from '../components/viewer/SurveyForm.vue';
 import ViewerToolbar from '../components/viewer/ViewerToolbar.vue';
 import { createCaptionStore } from '../composables/useCaptionStore';
 import { usePreferences } from '../composables/usePreferences';
 import { useRoomSocket } from '../composables/useRoomSocket';
 import { useWakeLock } from '../composables/useWakeLock';
 import { downloadCaptions } from '../utils/download';
+import { readJson, writeJson } from '../utils/storage';
 
 const props = defineProps<{ code: string }>();
 
@@ -37,6 +39,29 @@ const banner = computed<{ kind: 'info' | 'error'; text: string } | null>(() => {
   return null;
 });
 
+// 설문: 강의가 끝나거나 강사가 요청하면 안내. 요청이 오면 한 번 자동으로 연다.
+const surveyOpen = ref(false);
+const surveySending = ref(false);
+const surveyOffered = computed(() => !!socket && socket.status.value !== 'failed' && (store.state.ended || store.state.surveyRequested));
+watch(
+  () => store.state.surveyRequested,
+  (req) => req && !store.state.surveySubmitted && (surveyOpen.value = true),
+);
+const SURVEY_DONE_KEY = `caption.survey.${props.code}.done`;
+store.state.surveySubmitted = readJson(localStorage, SURVEY_DONE_KEY, false);
+watch(
+  () => store.state.surveySubmitted,
+  (done) => {
+    surveySending.value = false;
+    if (done) writeJson(localStorage, SURVEY_DONE_KEY, true);
+  },
+);
+function submitSurvey(respondentId: string, answers: Record<string, number | string>) {
+  surveySending.value = true;
+  store.state.surveySubmitted = false;
+  socket?.send({ type: 'survey', respondentId, answers });
+}
+
 const statusDot = computed(() => {
   const s = socket?.status.value;
   if (store.state.ended || s === 'failed' || !s) return 'is-off';
@@ -63,6 +88,19 @@ const statusDot = computed(() => {
     </header>
 
     <p v-if="banner" class="notice banner" :class="{ 'is-error': banner.kind === 'error' }" role="status">{{ banner.text }}</p>
+
+    <button v-if="surveyOffered && !surveyOpen" type="button" class="survey-cta" :class="{ done: store.state.surveySubmitted }" @click="surveyOpen = true">
+      {{ store.state.surveySubmitted ? '✓ 설문 응답 완료 (수정하기)' : '📝 2분 설문에 참여해 주세요 — 자막 개선에 쓰입니다' }}
+    </button>
+
+    <SurveyForm
+      v-if="surveyOpen"
+      :code="code"
+      :submitted="store.state.surveySubmitted"
+      :sending="surveySending"
+      @submit="submitSurvey"
+      @close="surveyOpen = false"
+    />
 
     <main class="captions">
       <CaptionView :lines="store.state.lines" :interim="store.state.interim" :font-size="prefs.fontSize">
@@ -118,6 +156,23 @@ const statusDot = computed(() => {
 }
 .banner {
   margin: 8px 12px 0;
+}
+.survey-cta {
+  margin: 8px 12px 0;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+}
+.survey-cta.done {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 600;
 }
 .captions {
   flex: 1;
