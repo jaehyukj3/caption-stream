@@ -12,7 +12,7 @@ class FakePeer {
   }
 }
 
-test('늦게 들어온 수신자는 이력을, 재연결 수신자는 sinceSeq 이후만 받는다', () => {
+test('늦게 들어온 수신자는 이력을, 재연결 수신자는 sinceSeq부터 받는다', () => {
   const room = new Room('123456', 'tok');
   const host = new FakePeer();
   room.addPeer(host, 'host');
@@ -26,7 +26,7 @@ test('늦게 들어온 수신자는 이력을, 재연결 수신자는 sinceSeq �
 
   const rejoin = new FakePeer();
   room.addPeer(rejoin, 'viewer', 2);
-  assert.deepEqual(rejoin.of('history')[0]!.lines.map((l) => l.seq), [3]);
+  assert.deepEqual(rejoin.of('history')[0]!.lines.map((l) => l.seq), [2, 3]);
 });
 
 test('final은 송출자에게도 seq와 함께 전달되고 viewerCount가 갱신된다', () => {
@@ -81,42 +81,26 @@ test('송출자가 없거나 종료 후 2시간이 지나면 만료', () => {
   assert.equal(ended.pushFinal('무시'), null);
 });
 
-test('설문: 종료 후에도 참석자 응답을 받아 송출자에게만 전달하고, 형식이 틀리면 거부한다', async () => {
-  const { openConnection, susScore } = await import('@caption/shared');
+test('revise: 송출자가 마지막 문장을 고치면 같은 번호로 모두에게 바뀌고, 재접속하면 고친 문장을 다시 받는다', () => {
   const room = new Room('123456', 'tok');
-  const rooms = { get: (c: string) => (c === '123456' ? room : undefined), verifyHost: (_r: Room, t?: string) => t === 'tok' };
   const host = new FakePeer();
   const viewer = new FakePeer();
-  const other = new FakePeer();
-  const h = openConnection(host, rooms, { allowHost: true });
-  const v = openConnection(viewer, rooms, { allowHost: true });
-  const o = openConnection(other, rooms, { allowHost: true });
-  h.handleRaw(JSON.stringify({ type: 'join', code: '123456', role: 'host', hostToken: 'tok' }));
-  v.handleRaw(JSON.stringify({ type: 'join', code: '123456', role: 'viewer' }));
-  h.handleRaw(JSON.stringify({ type: 'end' }));
-  h.handleRaw(JSON.stringify({ type: 'surveyPrompt' }));
-  assert.equal(viewer.of('surveyPrompt').length, 1);
-  // 요청 이후 들어온 참석자도 요청을 받는다
-  o.handleRaw(JSON.stringify({ type: 'join', code: '123456', role: 'viewer' }));
-  assert.equal(other.of('surveyPrompt').length, 1);
-
-  const answers: Record<string, number | string> = { comment: '좋아요', hearing: 1 };
-  for (let i = 1; i <= 5; i++) answers[`e${i}`] = 4;
-  for (let i = 1; i <= 10; i++) answers[`s${i}`] = i % 2 ? 5 : 1;
-  v.handleRaw(JSON.stringify({ type: 'survey', respondentId: 'abcdefgh12', answers: { ...answers, s3: 9 } }));
-  assert.equal(viewer.of('error').at(-1)!.code, 'BAD_MESSAGE');
-  v.handleRaw(JSON.stringify({ type: 'survey', respondentId: 'abcdefgh12', answers }));
-  v.handleRaw(JSON.stringify({ type: 'survey', respondentId: 'abcdefgh12', answers })); // 다시 내면 덮어쓴다
-  assert.equal(viewer.of('surveyAck').length, 2);
-  assert.equal(other.of('surveyResponses').length, 0);
-  const got = host.of('surveyResponses').flatMap((m) => m.responses);
-  assert.equal(got.at(-1)!.answers.comment, '좋아요');
-  assert.equal(susScore(got.at(-1)!.answers), 100);
-
-  // 송출자가 다시 접속하면 응답 전체(중복 없이)를 받는다
-  const host2 = new FakePeer();
-  room.addPeer(host2, 'host');
-  assert.equal(host2.of('surveyResponses')[0]!.responses.length, 1);
+  room.addPeer(host, 'host');
+  room.addPeer(viewer, 'viewer');
+  room.pushFinal('우리 2조에만 다른 동기 다 오셨나요');
+  room.pushFinal('강의를 시작하겠습니다');
+  room.reviseLast('강의를 좀 시작해 보겠습니다');
+  const rev = viewer.of('revise');
+  assert.equal(rev.length, 1);
+  assert.deepEqual([rev[0]!.line.seq, rev[0]!.line.text], [2, '강의를 좀 시작해 보겠습니다']);
+  assert.equal(host.of('revise').length, 1);
+  assert.equal(room.lines.at(-1)!.text, '강의를 좀 시작해 보겠습니다');
+  // 마지막으로 받은 seq가 2인 수신자가 재접속하면 고친 2번 문장부터 받는다
+  const back = new FakePeer();
+  room.addPeer(back, 'viewer', 2);
+  assert.deepEqual(back.of('history')[0]!.lines.map((l) => l.text), ['강의를 좀 시작해 보겠습니다']);
+  room.end();
+  assert.equal(room.reviseLast('종료 후에는 안 바뀜'), null);
 });
 
 test('이용 통계: 같은 기기의 재접속은 한 사람으로 세고, 접속 시간과 동시 접속자 변화를 기록한다', () => {

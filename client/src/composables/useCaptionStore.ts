@@ -1,5 +1,5 @@
 import { computed, reactive } from 'vue';
-import type { CaptionLine, ServerMessage, SurveyResponse } from '@caption/shared';
+import type { CaptionLine, ServerMessage } from '@caption/shared';
 
 /**
  * 자막 상태. 송출자 화면, 수신자 화면, PiP 창이 같은 객체를 공유한다.
@@ -11,21 +11,28 @@ export function createCaptionStore() {
     interim: '',
     ended: false,
     viewerCount: 0,
-    /** 참석자: 송출자가 설문을 요청함 */
-    surveyRequested: false,
-    /** 참석자: 응답이 접수됨 */
-    surveySubmitted: false,
-    /** 송출자: 받은 설문 응답 (기기별 마지막 응답) */
-    surveyResponses: [] as SurveyResponse[],
   });
 
   const lastSeq = computed(() => state.lines.at(-1)?.seq ?? 0);
 
   function addLines(lines: CaptionLine[]) {
     const last = lastSeq.value;
-    // 재연결 중 중복 수신 방지: seq가 더 큰 것만 붙인다
+    // 재연결 중 중복 수신 방지: seq가 더 큰 것만 붙인다. 이미 있는 번호는 내용만 갱신(끊긴 사이에 고쳐졌을 수 있음)
+    for (const l of lines) if (l.seq <= last) revise(l);
     const fresh = lines.filter((l) => l.seq > last);
     if (fresh.length) state.lines.push(...fresh);
+  }
+
+  /** 이미 받은 문장의 내용을 고친 것으로 바꾼다 (보통 마지막 줄) */
+  function revise(line: CaptionLine) {
+    for (let i = state.lines.length - 1; i >= 0; i--) {
+      const l = state.lines.at(i)!;
+      if (l.seq === line.seq) {
+        if (l.text !== line.text) state.lines.splice(i, 1, line);
+        return;
+      }
+      if (l.seq < line.seq) return;
+    }
   }
 
   function apply(msg: ServerMessage) {
@@ -35,6 +42,9 @@ export function createCaptionStore() {
         break;
       case 'history':
         addLines(msg.lines);
+        break;
+      case 'revise':
+        revise(msg.line);
         break;
       case 'final':
         addLines([msg.line]);
@@ -50,18 +60,6 @@ export function createCaptionStore() {
         state.ended = true;
         state.interim = '';
         break;
-      case 'surveyPrompt':
-        state.surveyRequested = true;
-        break;
-      case 'surveyAck':
-        state.surveySubmitted = true;
-        break;
-      case 'surveyResponses': {
-        const byId = new Map(state.surveyResponses.map((r) => [r.respondentId, r]));
-        for (const r of msg.responses) byId.set(r.respondentId, r);
-        state.surveyResponses = [...byId.values()];
-        break;
-      }
     }
   }
 

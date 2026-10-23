@@ -9,7 +9,6 @@ import {
   type ServerMessage,
   type ShareMessage,
 } from './protocol.js';
-import { MAX_SURVEY_RESPONSES, type SurveyResponse } from './survey.js';
 
 /** 방에 붙는 연결. ws.WebSocket을 그대로 넘겨도 되고 테스트에서는 가짜 객체를 쓴다. */
 export interface Peer {
@@ -25,10 +24,6 @@ export class Room {
   private share: ShareMessage = { type: 'share', relay: 'off', relayViewerUrl: null };
   private readonly viewers = new Set<Peer>();
   private nextSeq = 1;
-  /** 설문 응답 (참석자 기기별 익명 ID → 마지막 응답). 송출자에게만 보낸다. */
-  private readonly surveys = new Map<string, SurveyResponse>();
-  /** 송출자가 설문을 요청했는지 (이후 들어오는 참석자에게도 알린다) */
-  surveyRequested = false;
 
   // 이용 통계 (테스트 기록용): 접속 중인 수신자 → 익명 ID와 접속 시각, 익명 ID → 누적 기록
   readonly createdAt = Date.now();
@@ -67,17 +62,14 @@ export class Room {
     else this.trackJoin(peer, clientId);
 
     send(peer, { type: 'joined', role, code: this.code, ended: this.ended });
-    if (role === 'host') {
-      send(peer, this.share);
-      send(peer, { type: 'surveyResponses', responses: [...this.surveys.values()] });
-    }
-    send(peer, { type: 'history', lines: sinceSeq > 0 ? this.lines.filter((l) => l.seq > sinceSeq) : this.lines });
+    if (role === 'host') send(peer, this.share);
+    // 재접속하면 마지막으로 받은 문장부터 다시 보낸다 (끊긴 사이에 고쳐졌을 수 있어서)
+    send(peer, { type: 'history', lines: sinceSeq > 0 ? this.lines.filter((l) => l.seq >= sinceSeq) : this.lines });
     if (this.ended) {
       send(peer, { type: 'sessionEnd' });
     } else if (role === 'viewer' && this.currentInterim) {
       send(peer, { type: 'interim', text: this.currentInterim });
     }
-    if (role === 'viewer' && this.surveyRequested) send(peer, { type: 'surveyPrompt' });
     this.broadcastViewerCount();
   }
 
@@ -166,20 +158,15 @@ export class Room {
     this.broadcast({ type: 'sessionEnd' }, true);
   }
 
-  /** 설문 응답 저장 후 송출자에게 전달. 같은 참석자가 다시 내면 덮어쓴다. */
-  addSurvey(from: Peer, respondentId: string, answers: SurveyResponse['answers']): void {
-    if (!this.surveys.has(respondentId) && this.surveys.size >= MAX_SURVEY_RESPONSES) return;
-    const response: SurveyResponse = { respondentId, answers, submittedAt: Date.now() };
-    this.surveys.set(respondentId, response);
-    send(from, { type: 'surveyAck', respondentId });
-    const data = JSON.stringify({ type: 'surveyResponses', responses: [response] } satisfies ServerMessage);
-    for (const h of this.hosts) h.send(data);
-  }
-
-  /** 접속해 있는 참석자 모두에게 설문 참여를 요청 */
-  requestSurvey(): void {
-    this.surveyRequested = true;
-    this.broadcast({ type: 'surveyPrompt' }, false);
+  /** 마지막 문장을 고친 내용으로 바꾼다 (번호·시각은 그대로) */
+  reviseLast(text: string): CaptionLine | null {
+    const last = this.lines.at(-1);
+    if (this.ended || !last || last.text === text) return null;
+    this.cancelInterim();
+    const line: CaptionLine = { ...last, text };
+    this.lines[this.lines.length - 1] = line;
+    this.broadcast({ type: 'revise', line }, true);
+    return line;
   }
 
   setShare(relay: RelayState, relayViewerUrl: string | null): void {

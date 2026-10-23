@@ -3,8 +3,6 @@
  * 모든 메시지는 JSON 텍스트 프레임이며 `type` 필드로 구분한다.
  */
 
-import type { SurveyResponse } from './survey.js';
-
 /** 확정된 자막 한 줄. seq는 방 안에서 1부터 단조 증가한다. */
 export interface CaptionLine {
   seq: number;
@@ -43,16 +41,10 @@ export interface EndMessage {
   type: 'end';
 }
 
-/** 참석자 → 송출자: 설문 응답 (세션 종료 후에도 보낼 수 있다) */
-export interface SurveyUpMessage {
-  type: 'survey';
-  respondentId: string;
-  answers: Record<string, number | string>;
-}
-
-/** 송출자 → 참석자 전체: 설문 참여 요청 */
-export interface SurveyPromptUpMessage {
-  type: 'surveyPrompt';
+/** 송출자 → 서버: 방금 확정한 마지막 문장을 고친 결과로 바꾼다 (음성인식이 문장을 고쳐 다시 보낸 경우) */
+export interface ReviseUpMessage {
+  type: 'revise';
+  text: string;
 }
 
 /** 송출자 → 서버: 이용 통계 요청 (테스트 기록용) */
@@ -65,8 +57,7 @@ export type ClientMessage =
   | InterimUpMessage
   | FinalUpMessage
   | EndMessage
-  | SurveyUpMessage
-  | SurveyPromptUpMessage
+  | ReviseUpMessage
   | StatsRequestMessage;
 
 // ───────── 서버 → 클라이언트 ─────────
@@ -122,19 +113,10 @@ export interface ShareMessage {
   relayViewerUrl: string | null;
 }
 
-/** 송출자에게만: 설문 응답 (입장 시 전체, 이후 새로 들어온 것) */
-export interface SurveyResponsesMessage {
-  type: 'surveyResponses';
-  responses: SurveyResponse[];
-}
-
-/** 참석자에게: 설문 참여 요청 / 응답 접수 확인 */
-export interface SurveyPromptDownMessage {
-  type: 'surveyPrompt';
-}
-export interface SurveyAckMessage {
-  type: 'surveyAck';
-  respondentId: string;
+/** 이미 보낸 문장(같은 seq)의 내용이 고쳐짐 */
+export interface ReviseDownMessage {
+  type: 'revise';
+  line: CaptionLine;
 }
 
 /** 수신자 한 명(기기)의 이용 기록. 익명 ID 외의 정보는 없다. */
@@ -173,9 +155,7 @@ export type ServerMessage =
   | FinalDownMessage
   | ViewerCountMessage
   | SessionEndMessage
-  | SurveyResponsesMessage
-  | SurveyPromptDownMessage
-  | SurveyAckMessage
+  | ReviseDownMessage
   | StatsMessage
   | ErrorMessage;
 

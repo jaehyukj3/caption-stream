@@ -17,7 +17,6 @@ import MicControls, { type MicDevice, type MicState } from './MicControls.vue';
 import { readJson, writeJson } from '../../utils/storage';
 import SessionLogPanel from './SessionLogPanel.vue';
 import SessionPanel from './SessionPanel.vue';
-import SurveyHostPanel from './SurveyHostPanel.vue';
 
 const props = defineProps<{ code: string; hostToken: string }>();
 const emit = defineEmits<{ newSession: []; invalid: [] }>();
@@ -65,7 +64,7 @@ function requestSaveLog() {
 }
 function saveLog() {
   saveWhenStats = false;
-  sessionLog.download(stats.value, store.state.lines, { surveyResponses: store.state.surveyResponses.length });
+  sessionLog.download(stats.value, store.state.lines);
 }
 
 // 마이크 선택 (USB 오디오 어댑터로 앰프 출력을 받는 경우 등). 기기별로 기억한다.
@@ -104,6 +103,9 @@ stt.onFinal((raw) => {
   // 확정 문장은 용어 사전 치환 후 송출. 화면에는 서버가 seq를 붙여 돌려준 것을 표시한다.
   socket.send({ type: 'final', text: dict.apply(raw) });
 });
+
+// 음성인식이 방금 문장을 고쳐 다시 보내면 새 줄 대신 마지막 줄을 바꾼다
+stt.onRevise?.((raw) => socket.send({ type: 'revise', text: dict.apply(raw) }));
 
 stt.onError((err) => {
   sttMessage.value = err.message;
@@ -239,7 +241,7 @@ onBeforeUnmount(() => {
 
       <div v-if="micState === 'ended'" class="card ended">
         <strong>세션이 종료되었습니다.</strong>
-        <p class="muted">수신자는 2시간 동안 자막 이력을 계속 보고 다운로드할 수 있고, 설문 응답도 계속 받습니다.</p>
+        <p class="muted">수신자는 2시간 동안 자막 이력을 계속 보고 다운로드할 수 있습니다.</p>
         <button type="button" class="btn btn-primary" @click="emit('newSession')">새 세션 만들기</button>
       </div>
 
@@ -249,14 +251,6 @@ onBeforeUnmount(() => {
         <FloatingCaptionButton :source="pipSource" :font-size="prefs.fontSize" />
         <button type="button" class="btn" :disabled="!store.state.lines.length" @click="downloadCaptions(store.state.lines, code)">⤓ 자막 저장(.txt)</button>
       </div>
-
-      <SurveyHostPanel
-        :code="code"
-        :responses="store.state.surveyResponses"
-        :ended="store.state.ended"
-        :viewer-count="store.state.viewerCount"
-        @request="socket.send({ type: 'surveyPrompt' })"
-      />
 
       <SessionLogPanel :log="sessionLog" :stats="stats" @save="requestSaveLog" />
 

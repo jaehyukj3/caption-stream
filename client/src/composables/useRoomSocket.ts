@@ -37,7 +37,7 @@ const MAX_BACKOFF_MS = 10_000;
 
 /**
  * 방 WebSocket 연결. 끊기면 지수 백오프(1s→2s→4s…최대 10s)로 자동 재연결한다.
- * 연결이 없는 동안 보낸 final/end/설문은 큐에 모았다가 재입장 후 보낸다. interim은 버린다.
+ * 연결이 없는 동안 보낸 final/revise/end는 큐에 모았다가 재입장 후 보낸다. interim은 버린다.
  */
 export function useRoomSocket(opts: RoomSocketOptions) {
   const status = ref<SocketStatus>('connecting');
@@ -174,7 +174,7 @@ export function useRoomSocket(opts: RoomSocketOptions) {
       rawSend(ws, msg);
       return;
     }
-    if (msg.type === 'final' || msg.type === 'end' || msg.type === 'survey' || msg.type === 'surveyPrompt') {
+    if (msg.type === 'final' || msg.type === 'revise' || msg.type === 'end') {
       queue.push(msg);
       syncPending();
     }

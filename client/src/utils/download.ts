@@ -1,4 +1,4 @@
-import { surveyToCsv, type CaptionLine, type SurveyResponse } from '@caption/shared';
+import type { CaptionLine } from '@caption/shared';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -21,12 +21,7 @@ export function downloadCaptions(lines: readonly CaptionLine[], code: string): v
   saveText(`captions_${code}_${stamp()}.txt`, captionsToText(lines) + '\r\n', 'text/plain');
 }
 
-/** 설문 응답을 엑셀에서 바로 열리는 .csv로 저장 */
-export function downloadSurvey(responses: readonly SurveyResponse[], code: string): void {
-  saveText(`survey_${code}_${stamp()}.csv`, surveyToCsv([...responses]), 'text/csv');
-}
-
-/** 텍스트·CSV는 BOM을 붙여 윈도우 메모장·엑셀에서도 한글이 깨지지 않게 한다 (JSON은 붙이지 않음) */
+/** 텍스트는 BOM을 붙여 윈도우 메모장·엑셀에서도 한글이 깨지지 않게 한다 (JSON은 붙이지 않음) */
 export function saveText(filename: string, text: string, mime: string): void {
   const blob = new Blob([mime === 'application/json' ? '' : '\ufeff', text], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);

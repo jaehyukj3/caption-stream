@@ -42,12 +42,54 @@ const FATAL_ERRORS: Record<string, string> = {
 };
 
 const MAX_RESTART_DELAY_MS = 5000;
-/** 이 시간 안에 같은(또는 이어 붙은) 문장이 다시 오면 중복으로 본다 */
-const DUPLICATE_WINDOW_MS = 10_000;
+/**
+ * 이 시간 안에 같은(또는 이어 붙은·고쳐진) 문장이 다시 오면 중복으로 본다.
+ * 휴대폰 크롬은 확정한 긴 문장을 30초쯤 뒤에 앞부분을 고치거나 뒤를 늘려 다시 보내기도 한다.
+ */
+const DUPLICATE_WINDOW_MS = 60_000;
+/** 앞부분이 이만큼 같으면 같은 문장을 고친 것으로 본다 (글자 기준) */
+const REVISION_SIMILARITY = 0.8;
+/** 짧은 문장은 비슷한 다른 문장일 수 있어("1번 확인", "2번 확인") 고친 것으로 보지 않는다 */
+const REVISION_MIN_CHARS = 12;
+/** 길이가 거의 같은 고침은 바로 다시 온 것만 (실제 크롬은 1~2초 안에 고쳐 보낸다) */
+const CORRECTION_WINDOW_MS = 5_000;
+/** 이만큼 이상 늘어났으면 '고친 뒤 이어 말한 것' */
+const EXTENSION_MIN_CHARS = 5;
 const IGNORED = /[\s.,?!]/;
 /** 잠시 쉬면(이어지는 결과가 없으면) 한 줄로 확정 */
 const COMMIT_DELAY_MS = 900;
-const norm = (s: string) => s.replace(/[\s.,?!]/g, '');
+const norm = (s: string) => s.replace(/[\s.,?!]/g, '').toLowerCase();
+
+/** 두 문자열의 편집 거리 */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur.push(Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1)));
+    }
+    prev = cur;
+  }
+  return prev[b.length]!;
+}
+
+/**
+ * b가 a를 고쳐 다시 보낸 것인지: 'same'(같거나 a의 앞부분만 다시 옴), 'revised'(고쳐졌거나 고친 뒤 늘어남), 'different'
+ * elapsedMs: a를 확정한 뒤 지난 시간
+ */
+function compareRevision(a: string, b: string, elapsedMs: number): 'same' | 'revised' | 'different' {
+  const x = norm(a);
+  const y = norm(b);
+  if (x.length < REVISION_MIN_CHARS || y.length < REVISION_MIN_CHARS) return 'different';
+  if (x.startsWith(y)) return 'same';
+  if (y.length < x.length + EXTENSION_MIN_CHARS && elapsedMs > CORRECTION_WINDOW_MS) return 'different';
+  // 고치면서 글자 수가 조금 달라질 수 있어(예: "2조" → "초") b의 앞부분을 a 길이 ±3 범위에서 맞춰 본다
+  let best = Infinity;
+  for (let n = Math.max(1, x.length - 3); n <= Math.min(y.length, x.length + 3); n++) best = Math.min(best, editDistance(x, y.slice(0, n)));
+  if (1 - best / x.length >= REVISION_SIMILARITY) return 'revised';
+  // 더 짧게 다시 온 것이 a의 앞부분과 비슷하면 그냥 재전송
+  return y.length < x.length && 1 - editDistance(x.slice(0, y.length), y) / y.length >= REVISION_SIMILARITY ? 'same' : 'different';
+}
 
 /** text가 prefix로 시작하면(공백·문장부호 무시) 그 부분을 뺀 나머지 */
 function stripPrefix(text: string, prefix: string): string {
@@ -78,6 +120,8 @@ export class WebSpeechProvider implements SttProvider {
   private commitTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFinal = '';
   private lastFinalAt = 0;
+  /** 마지막 줄을 낼 때 앞에서 빼낸 부분 (누적형 결과에서 이전 문장). 고칠 때도 똑같이 뺀다. */
+  private lastLineBase = '';
   /** 이번 인식 세션에서 확정으로 낸 결과: 번호 → 내용 */
   private readonly finalized = new Map<number, string>();
   private restartDelay = 0;
@@ -87,6 +131,7 @@ export class WebSpeechProvider implements SttProvider {
   private interimCb: (t: string) => void = () => {};
   private finalCb: (t: string) => void = () => {};
   private errorCb: (e: SttError) => void = () => {};
+  private reviseCb: (t: string) => void = () => {};
   private diagCb: (e: SttDiag) => void = () => {};
 
   constructor(private readonly lang = 'ko-KR') {}
@@ -99,6 +144,9 @@ export class WebSpeechProvider implements SttProvider {
   }
   onError(cb: (err: SttError) => void) {
     this.errorCb = cb;
+  }
+  onRevise(cb: (text: string) => void) {
+    this.reviseCb = cb;
   }
   onDiag(cb: (e: SttDiag) => void) {
     this.diagCb = cb;
@@ -210,10 +258,29 @@ export class WebSpeechProvider implements SttProvider {
     if (this.commitTimer) clearTimeout(this.commitTimer);
     this.commitTimer = null;
     if (!this.pending) return;
-    const fresh = this.withoutPrevious(this.pending);
-    this.lastFinal = this.pending;
-    this.lastFinalAt = Date.now();
+    const text = this.pending;
     this.pending = '';
+    const recent = this.lastFinal && Date.now() - this.lastFinalAt < DUPLICATE_WINDOW_MS;
+    // 이어 붙은 결과(앞부분이 그대로)는 새로 늘어난 부분만 새 줄로
+    const fresh = this.withoutPrevious(text);
+    if (!fresh) return this.showInterim(); // 방금 낸 문장 그대로 다시 옴
+    if (recent && fresh === text) {
+      // 앞부분이 그대로가 아니면, 방금 낸 줄을 고쳐 다시 보낸 것인지 본다
+      const rel = compareRevision(this.lastFinal, text, Date.now() - this.lastFinalAt);
+      if (rel !== 'different') {
+        if (rel === 'revised') {
+          this.lastFinal = text;
+          this.lastFinalAt = Date.now();
+          const line = this.lastLineBase ? stripPrefix(text, this.lastLineBase) : text;
+          this.reviseCb(line);
+        }
+        this.showInterim();
+        return;
+      }
+    }
+    this.lastLineBase = fresh === text ? '' : this.lastFinal;
+    this.lastFinal = text;
+    this.lastFinalAt = Date.now();
     if (fresh) this.finalCb(fresh);
     this.showInterim();
   }

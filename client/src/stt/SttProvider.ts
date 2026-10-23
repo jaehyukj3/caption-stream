@@ -12,6 +12,8 @@ export interface SttProvider {
   onInterim(cb: (text: string) => void): void;
   onFinal(cb: (text: string) => void): void;
   onError(cb: (err: SttError) => void): void;
+  /** 방금 확정한 문장을 고친 결과 (새 줄을 추가하지 않고 마지막 줄을 바꾼다) */
+  onRevise?(cb: (text: string) => void): void;
   /** 사용할 마이크 (없으면 Windows 기본 마이크). 다음 start()부터 적용 */
   setDeviceId?(deviceId: string | null): void;
   /** 진단용 이벤트 (테스트 기록): 인식이 실제로 듣기 시작/멈춤, 오류 */
