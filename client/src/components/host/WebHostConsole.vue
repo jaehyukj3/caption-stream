@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
  * 웹 송출: 노트북 프로그램 없이 브라우저(PC·폰)에서 바로 송출한다.
- * 노트북 서버가 하던 일(방 관리·암호화·중계 연결)을 이 탭이 맡고,
- * 음성인식은 브라우저 내장 기능(구글·애플 서버)을 쓴다.
+ * 노트북 서버가 하던 일(방 관리·암호화·중계 연결)을 이 탭이 맡는다.
+ * 음성인식은 브라우저 내장 기능(구글·애플 서버) 또는 이 기기 안 엔진(WebAssembly, 음성 외부 전송 없음).
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { randomId, RelayBridge, Room, type RoomDirectory, type RoomStats, type ServerMessage, type ShareMessage } from '@caption/shared';
@@ -12,6 +12,7 @@ import { useSessionLog } from '../../composables/useSessionLog';
 import { usePreferences } from '../../composables/usePreferences';
 import { useWakeLock } from '../../composables/useWakeLock';
 import { createSttProvider } from '../../stt';
+import { OnDeviceSttProvider } from '../../stt/OnDeviceSttProvider';
 import { downloadCaptions } from '../../utils/download';
 import CaptionView from '../caption/CaptionView.vue';
 import DictionaryEditor from './DictionaryEditor.vue';
@@ -19,6 +20,7 @@ import MicControls, { type MicState } from './MicControls.vue';
 import SessionLogPanel from './SessionLogPanel.vue';
 import SessionPanel from './SessionPanel.vue';
 
+const props = withDefaults(defineProps<{ engine?: 'webspeech' | 'ondevice' }>(), { engine: 'webspeech' });
 const emit = defineEmits<{ newSession: [] }>();
 
 const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(6, '0');
@@ -46,11 +48,25 @@ const dict = useDictionary();
 const { prefs, biggerFont, smallerFont } = usePreferences(26);
 useWakeLock(); // 폰 화면이 꺼지면 마이크가 멈추므로 켜 둔다
 
-const stt = createSttProvider('webspeech');
+const sttMessage = ref('');
+const stt = createSttProvider(props.engine);
 const micState = ref<MicState>('idle');
 
+// 기기 안 인식: 화면을 열자마자 모델을 받아 두어(처음 한 번) 마이크 시작을 기다리지 않게 한다
+const modelState = ref<'idle' | 'loading' | 'ready' | 'error'>(props.engine === 'ondevice' ? 'loading' : 'idle');
+const modelProgress = ref(0);
+if (props.engine === 'ondevice') {
+  OnDeviceSttProvider.prepare((loaded, total) => (modelProgress.value = loaded / total)).then(
+    () => (modelState.value = 'ready'),
+    (e: Error) => {
+      modelState.value = 'error';
+      sttMessage.value = `음성인식 모델을 준비하지 못했습니다: ${e.message} (‘마이크 시작’을 누르면 다시 시도합니다)`;
+    },
+  );
+}
+
 // 테스트 기록: 이 탭이 곧 방이라 통계를 바로 읽는다
-const sessionLog = useSessionLog({ code, mode: 'web', engine: 'webspeech' });
+const sessionLog = useSessionLog({ code, mode: 'web', engine: props.engine === 'ondevice' ? 'sensevoice-wasm' : 'webspeech' });
 stt.onDiag?.(sessionLog.stt);
 watch(micState, (s) => sessionLog.mic(s));
 const stats = ref<RoomStats>(room.getStats());
@@ -59,7 +75,6 @@ function saveLog() {
   stats.value = room.getStats();
   sessionLog.download(stats.value, store.state.lines);
 }
-const sttMessage = ref('');
 const localInterim = ref('');
 
 stt.onInterim((raw) => {
@@ -86,8 +101,10 @@ async function start() {
   }
   micState.value = 'starting';
   sttMessage.value = '';
+  if (modelState.value === 'error') modelState.value = 'loading';
   try {
     await stt.start();
+    modelState.value = props.engine === 'ondevice' ? 'ready' : 'idle';
     micState.value = 'running';
   } catch {
     micState.value = 'paused';
@@ -160,9 +177,17 @@ onBeforeUnmount(() => {
     </main>
 
     <aside class="side">
-      <p class="notice web-note">
+      <p v-if="engine === 'ondevice'" class="notice web-note">
+        <b>웹 송출 · 기기 안 인식</b> — 음성은 이 기기 안에서 글자로 바뀌고 밖으로 나가지 않습니다.
+        이 화면을 닫거나 새로고침하면 자막이 끝납니다.
+      </p>
+      <p v-else class="notice web-note">
         <b>웹 송출</b> — 브라우저 내장 음성인식을 써서 음성이 구글·애플 서버로 전송됩니다.
         이 화면을 닫거나 새로고침하면 자막이 끝납니다. 음성이 밖으로 나가면 안 되는 강의는 노트북 프로그램(음성 외부 전송 없음)을 쓰세요.
+      </p>
+      <p v-if="modelState === 'loading'" class="notice model">
+        음성인식 모델 준비 중… {{ Math.round(modelProgress * 100) }}%
+        <small>처음 한 번만 약 240MB를 받고, 다음부터는 이 기기에 보관된 것을 씁니다.</small>
       </p>
 
       <MicControls v-model:device-id="noDevice" :state="micState" :level="0" :devices="[]" simple @start="start" @pause="pause" @end="end" />
@@ -236,6 +261,14 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   padding-bottom: 8px;
+}
+.model small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.side > .notice.model {
+  margin: 0;
 }
 .web-note {
   margin: 0;

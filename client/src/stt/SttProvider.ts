@@ -2,6 +2,7 @@
  * 음성인식 엔진 추상화.
  * - LocalSttProvider: 노트북 안에서 도는 엔진 (기본, 음성이 외부로 나가지 않음)
  * - WebSpeechProvider: 크롬·사파리 내장(Google·Apple 서버) — 웹 송출용
+ * - OnDeviceSttProvider: 폰·PC 브라우저 안에서 도는 엔진(WebAssembly) — 웹 송출용, 음성이 기기 밖으로 나가지 않음
  */
 export interface SttProvider {
   readonly isSupported: boolean;
@@ -21,7 +22,8 @@ export interface SttProvider {
 }
 
 export interface SttDiag {
-  type: 'listening' | 'stopped' | 'error';
+  /** decode: 기기 안 인식 1회 (detail = 인식 ms/말소리 ms) */
+  type: 'listening' | 'stopped' | 'error' | 'decode';
   detail?: string;
 }
 

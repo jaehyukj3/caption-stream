@@ -44,10 +44,22 @@ jobs:
         run: |
           npm run package:windows
           node scripts/stage-download.mjs release/caption-stream-windows.zip client/dist/dl
+      # 웹 송출 '기기 안 인식'용 음성인식 엔진(WebAssembly)과 모델(약 240MB, 20MB 조각)
+      - name: Stage on-device speech engine
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        run: node scripts/stage-web-stt.mjs client/dist/stt-web/engine
       - name: Deploy
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         working-directory: relay
         run: npm ci && npx wrangler deploy
+      - name: Check on-device engine
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "$RELAY_URL/stt-web/engine/manifest.json" | grep -q '"version"'; then echo "engine ok"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::기기 안 인식 엔진 파일이 배포되지 않았습니다"; exit 1
       - name: Check download
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         run: |

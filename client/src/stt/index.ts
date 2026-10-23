@@ -1,8 +1,9 @@
 import { LocalSttProvider } from './LocalSttProvider';
+import { OnDeviceSttProvider } from './OnDeviceSttProvider';
 import type { SttProvider } from './SttProvider';
 import { WebSpeechProvider } from './WebSpeechProvider';
 
-export type SttKind = 'local' | 'webspeech';
+export type SttKind = 'local' | 'webspeech' | 'ondevice';
 
 /**
  * 기본은 노트북 안의 로컬 엔진.
@@ -13,5 +14,7 @@ export function sttKindFromUrl(): SttKind {
 }
 
 export function createSttProvider(kind: SttKind = sttKindFromUrl()): SttProvider {
-  return kind === 'webspeech' ? new WebSpeechProvider('ko-KR') : new LocalSttProvider();
+  if (kind === 'webspeech') return new WebSpeechProvider('ko-KR');
+  if (kind === 'ondevice') return new OnDeviceSttProvider();
+  return new LocalSttProvider();
 }
