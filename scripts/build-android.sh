@@ -5,6 +5,7 @@
 # 환경 변수: APP_VERSION_CODE(정수) APP_VERSION_NAME SITE_URL
 set -euo pipefail
 out="${1:?출력 폴더}"
+mkdir -p "$out" && out="$(cd "$out" && pwd)" # 아래에서 android/로 옮겨 가므로 절대 경로로
 root="$(cd "$(dirname "$0")/.." && pwd)"
 aar="$root/android/app/libs/sherpa-onnx-1.13.8.aar"
 if [ ! -f "$aar" ]; then
