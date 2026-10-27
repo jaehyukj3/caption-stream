@@ -17,6 +17,8 @@ export interface SttProvider {
   onRevise?(cb: (text: string) => void): void;
   /** 사용할 마이크 (없으면 Windows 기본 마이크). 다음 start()부터 적용 */
   setDeviceId?(deviceId: string | null): void;
+  /** 최근 몇 초 동안 엔진으로 보낸 소리 (16kHz Int16, 진단용). 지원하는 엔진만. */
+  recentAudio?(): Int16Array | null;
   /** 진단용 이벤트 (테스트 기록): 인식이 실제로 듣기 시작/멈춤, 오류 */
   onDiag?(cb: (e: SttDiag) => void): void;
 }

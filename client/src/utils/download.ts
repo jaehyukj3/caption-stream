@@ -21,6 +21,18 @@ export function downloadCaptions(lines: readonly CaptionLine[], code: string): v
   saveText(`captions_${code}_${stamp()}.txt`, captionsToText(lines) + '\r\n', 'text/plain');
 }
 
+/** 파일 그대로 저장 */
+export function saveBlob(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /** 텍스트는 BOM을 붙여 윈도우 메모장·엑셀에서도 한글이 깨지지 않게 한다 (JSON은 붙이지 않음) */
 export function saveText(filename: string, text: string, mime: string): void {
   const blob = new Blob([mime === 'application/json' ? '' : '\ufeff', text], { type: `${mime};charset=utf-8` });

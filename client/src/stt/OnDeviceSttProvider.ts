@@ -115,6 +115,13 @@ export class OnDeviceSttProvider implements SttProvider {
 
   private running = false;
   private capture: MicCapture | null = null;
+  /** 마지막으로 쓴 마이크 (멈춘 뒤에도 최근 소리를 꺼내 볼 수 있게) */
+  private lastCapture: MicCapture | null = null;
+
+  /** 최근 10초 동안 엔진으로 보낸 소리 (진단용) */
+  recentAudio(): Int16Array | null {
+    return this.lastCapture?.recent() ?? null;
+  }
   private deviceId: string | null = null;
   private lastInterim = '';
   private flushWaiter: (() => void) | null = null;
@@ -152,6 +159,7 @@ export class OnDeviceSttProvider implements SttProvider {
       this.capture = await startMicCapture(this.deviceId, (pcm) => engineReady && worker?.postMessage({ op: 'audio', pcm }, [pcm]), {
         mobile: isMobileDevice(),
       });
+      this.lastCapture = this.capture;
     } catch (e) {
       this.running = false;
       throw e;
@@ -192,6 +200,7 @@ export class OnDeviceSttProvider implements SttProvider {
   private onWorker(m: WorkerOut) {
     switch (m.op) {
       case 'result':
+        if (m.kind === 'final') dlog(`인식 결과: "${m.text}"`);
         if (m.kind === 'interim') {
           this.lastInterim = m.text;
           this.interimCb(m.text);
@@ -204,6 +213,7 @@ export class OnDeviceSttProvider implements SttProvider {
         this.flushWaiter?.();
         break;
       case 'decode':
+        dlog(`인식 ${Math.round(m.ms)}ms / 말소리 ${(m.audioMs / 1000).toFixed(1)}초`);
         // 기기 성능 기록 (테스트 기록에 남는다): 인식 시간 / 말소리 길이
         this.diagCb({ type: 'decode', detail: `${Math.round(m.ms)}/${Math.round(m.audioMs)}` });
         break;

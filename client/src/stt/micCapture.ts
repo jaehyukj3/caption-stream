@@ -3,7 +3,9 @@ import { dlog } from '../utils/debugLog';
 
 /**
  * 마이크 소리를 16kHz PCM(Int16)으로 100ms씩 잘라 보내는 AudioWorklet.
- * AudioContext를 16kHz로 만들면 브라우저가 리샘플링해 준다.
+ * 노트북: AudioContext를 16kHz로 만들어 브라우저가 리샘플링한다.
+ * 휴대폰: 일부 안드로이드 기기에서 브라우저 리샘플링이 소리를 망가뜨려, 기기 기본 속도로 받고
+ *        여기서 직접 16kHz로 줄인다 (구간 평균).
  *
  * 입력 음량 자동 맞춤: 앰프 출력(크게 들어옴)이든 스피커 소리를 내장 마이크로
  * 받는 경우(작게 들어옴)든 인식에 알맞은 크기로 천천히 맞춘다.
@@ -12,8 +14,8 @@ import { dlog } from '../utils/debugLog';
 const WORKLET_SOURCE = `
 const CHUNK = ${STT_SAMPLE_RATE / 10};
 const TARGET = 0.08, MIN_GAIN = 0.5;
-/** 3초마다 입력 크기·증폭 배율을 알린다 (진단용) */
-const STATS_EVERY = ${STT_SAMPLE_RATE * 3};
+/** 3초마다 입력 크기·증폭 배율을 알린다 (진단용, sampleRate = 이 오디오 처리의 실제 속도) */
+const STATS_EVERY = sampleRate * 3;
 class PcmCapture extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -22,6 +24,17 @@ class PcmCapture extends AudioWorkletProcessor {
     this.floor = o.floor || 0.004; this.maxGain = o.maxGain || 8;
     this.buf = new Int16Array(CHUNK); this.n = 0; this.env = TARGET; this.gain = 1;
     this.sSum = 0; this.sPeak = 0; this.sN = 0;
+    // sampleRate: 이 오디오 처리의 실제 속도 (AudioWorklet 전역 값)
+    this.ratio = sampleRate / ${STT_SAMPLE_RATE}; this.acc = 0; this.accN = 0; this.pos = 0;
+  }
+  push(s) {
+    this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    if (this.n === CHUNK) {
+      // 버퍼를 넘기면(transfer) 원래 배열은 길이 0이 되므로 새로 만든다
+      this.port.postMessage(this.buf.buffer, [this.buf.buffer]);
+      this.buf = new Int16Array(CHUNK);
+      this.n = 0;
+    }
   }
   process(inputs) {
     const ch = inputs[0] && inputs[0][0];
@@ -38,15 +51,13 @@ class PcmCapture extends AudioWorkletProcessor {
       if (rms > FLOOR) this.env = this.env * 0.995 + rms * 0.005;
       const want = Math.min(MAX_GAIN, Math.max(MIN_GAIN, TARGET / this.env));
       this.gain += (want - this.gain) * 0.01;
+      const passThrough = Math.abs(this.ratio - 1) < 0.001;
       for (let i = 0; i < ch.length; i++) {
         const s = Math.max(-1, Math.min(1, ch[i] * this.gain));
-        this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        if (this.n === CHUNK) {
-          // 버퍼를 넘기면(transfer) 원래 배열은 길이 0이 되므로 새로 만든다
-          this.port.postMessage(this.buf.buffer, [this.buf.buffer]);
-          this.buf = new Int16Array(CHUNK);
-          this.n = 0;
-        }
+        if (passThrough) { this.push(s); continue; }
+        // 16kHz 한 샘플에 해당하는 입력 구간을 평균 (고음 섞임 방지 겸 간단한 저역 통과)
+        this.acc += s; this.accN++; this.pos++;
+        if (this.pos >= this.ratio) { this.push(this.acc / this.accN); this.acc = 0; this.accN = 0; this.pos -= this.ratio; }
       }
     }
     return true;
@@ -67,6 +78,29 @@ export function micErrorMessage(e: unknown): string {
 
 export interface MicCapture {
   stop(): void;
+  /** 최근 10초 동안 엔진으로 보낸 소리 (16kHz Int16, 진단용) */
+  recent(): Int16Array;
+}
+
+const RECENT_CHUNKS = 100; // 100ms × 100 = 10초
+
+/** 16kHz mono Int16 PCM → WAV 파일 */
+export function pcmToWav(pcm: Int16Array, rate = STT_SAMPLE_RATE): Blob {
+  const header = new DataView(new ArrayBuffer(44));
+  const w = (o: number, s: string) => [...s].forEach((c, i) => header.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF');
+  header.setUint32(4, 36 + pcm.byteLength, true);
+  w(8, 'WAVEfmt ');
+  header.setUint32(16, 16, true);
+  header.setUint16(20, 1, true);
+  header.setUint16(22, 1, true);
+  header.setUint32(24, rate, true);
+  header.setUint32(28, rate * 2, true);
+  header.setUint16(32, 2, true);
+  header.setUint16(34, 16, true);
+  w(36, 'data');
+  header.setUint32(40, pcm.byteLength, true);
+  return new Blob([header.buffer, pcm.buffer as ArrayBuffer], { type: 'audio/wav' });
 }
 
 export interface MicCaptureOptions {
@@ -102,7 +136,7 @@ export async function startMicCapture(
     },
   });
   dlog(`마이크 열림: ${media.getAudioTracks()[0]?.label || '이름 없음'}`);
-  const ctx = new AudioContext({ sampleRate: STT_SAMPLE_RATE });
+  const ctx = options.mobile ? new AudioContext() : new AudioContext({ sampleRate: STT_SAMPLE_RATE });
   dlog(`오디오 처리 생성: ${ctx.state}, ${ctx.sampleRate}Hz`);
   const stop = () => {
     media.getTracks().forEach((t) => t.stop());
@@ -141,9 +175,22 @@ export async function startMicCapture(
   }
   let chunks = 0;
   const first = onChunk;
+  const ring: Int16Array[] = [];
   onChunk = (pcm) => {
     if (++chunks === 1) dlog('첫 소리 조각 받음');
+    // 진단용으로 최근 소리를 복사해 둔다 (원본은 엔진으로 넘겨져 비워진다)
+    ring.push(new Int16Array(pcm.slice(0)));
+    if (ring.length > RECENT_CHUNKS) ring.shift();
     first(pcm);
   };
-  return { stop };
+  const recent = () => {
+    const out = new Int16Array(ring.reduce((n, c) => n + c.length, 0));
+    let o = 0;
+    for (const c of ring) {
+      out.set(c, o);
+      o += c.length;
+    }
+    return out;
+  };
+  return { stop, recent };
 }

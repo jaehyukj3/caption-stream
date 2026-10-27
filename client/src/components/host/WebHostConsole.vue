@@ -12,10 +12,10 @@ import { useSessionLog } from '../../composables/useSessionLog';
 import { usePreferences } from '../../composables/usePreferences';
 import { useWakeLock } from '../../composables/useWakeLock';
 import { createSttProvider } from '../../stt';
-import { micErrorMessage } from '../../stt/micCapture';
+import { micErrorMessage, pcmToWav } from '../../stt/micCapture';
 import { debugLines, dlog } from '../../utils/debugLog';
 import { OnDeviceSttProvider, type ModelPhase } from '../../stt/OnDeviceSttProvider';
-import { downloadCaptions } from '../../utils/download';
+import { downloadCaptions, saveBlob, stamp } from '../../utils/download';
 import CaptionView from '../caption/CaptionView.vue';
 import DictionaryEditor from './DictionaryEditor.vue';
 import MicControls, { type MicState } from './MicControls.vue';
@@ -23,6 +23,16 @@ import SessionLogPanel from './SessionLogPanel.vue';
 import SessionPanel from './SessionPanel.vue';
 
 const build = __BUILD__;
+/** 진단: 엔진으로 실제 들어간 최근 10초 소리를 파일로 (소리가 깨끗한지 들어 보기) */
+function saveRecentAudio() {
+  const pcm = stt.recentAudio?.();
+  if (!pcm || !pcm.length) {
+    dlog('저장할 소리가 없습니다 (마이크를 켠 뒤에 눌러 주세요)');
+    return;
+  }
+  saveBlob(`mic-check_${stamp()}.wav`, pcmToWav(pcm));
+  dlog(`최근 소리 ${(pcm.length / 16000).toFixed(1)}초 저장`);
+}
 /** 진단: 이 사이트의 마이크 권한 상태 (granted / denied / prompt) */
 const micPermission = ref('확인 중');
 async function refreshMicPermission() {
@@ -254,6 +264,7 @@ onBeforeUnmount(() => {
         <summary>진단 정보 (문제가 있을 때 이 화면을 캡처해 보내 주세요)</summary>
         <p>버전 {{ build }} · 엔진 {{ engine }} · 모델 {{ modelState }}/{{ modelPhase }} · 마이크 {{ micState }} · 권한 {{ micPermission }}</p>
         <p>{{ env }}</p>
+        <button v-if="engine === 'ondevice'" type="button" class="btn" @click="saveRecentAudio">⤓ 최근 10초 소리 저장(.wav)</button>
         <pre>{{ debugLines.join('\n') || '(기록 없음)' }}</pre>
       </details>
     </aside>
@@ -321,6 +332,10 @@ onBeforeUnmount(() => {
 .diag p {
   margin: 8px 0 0;
   overflow-wrap: anywhere;
+}
+.diag .btn {
+  margin-top: 8px;
+  width: 100%;
 }
 .diag pre {
   margin: 8px 0 0;
