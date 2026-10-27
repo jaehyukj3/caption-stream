@@ -12,7 +12,7 @@ import { useSessionLog } from '../../composables/useSessionLog';
 import { usePreferences } from '../../composables/usePreferences';
 import { useWakeLock } from '../../composables/useWakeLock';
 import { createSttProvider } from '../../stt';
-import { OnDeviceSttProvider } from '../../stt/OnDeviceSttProvider';
+import { OnDeviceSttProvider, type ModelPhase } from '../../stt/OnDeviceSttProvider';
 import { downloadCaptions } from '../../utils/download';
 import CaptionView from '../caption/CaptionView.vue';
 import DictionaryEditor from './DictionaryEditor.vue';
@@ -55,8 +55,13 @@ const micState = ref<MicState>('idle');
 // 기기 안 인식: 화면을 열자마자 모델을 받아 두어(처음 한 번) 마이크 시작을 기다리지 않게 한다
 const modelState = ref<'idle' | 'loading' | 'ready' | 'error'>(props.engine === 'ondevice' ? 'loading' : 'idle');
 const modelProgress = ref(0);
-if (props.engine === 'ondevice') {
-  OnDeviceSttProvider.prepare((loaded, total) => (modelProgress.value = loaded / total)).then(
+const modelPhase = ref<ModelPhase>('download');
+function prepareModel() {
+  modelState.value = 'loading';
+  OnDeviceSttProvider.prepare((phase, fraction) => {
+    modelPhase.value = phase;
+    modelProgress.value = fraction;
+  }).then(
     () => (modelState.value = 'ready'),
     (e: Error) => {
       modelState.value = 'error';
@@ -64,6 +69,7 @@ if (props.engine === 'ondevice') {
     },
   );
 }
+if (props.engine === 'ondevice') prepareModel();
 
 // 테스트 기록: 이 탭이 곧 방이라 통계를 바로 읽는다
 const sessionLog = useSessionLog({ code, mode: 'web', engine: props.engine === 'ondevice' ? 'sensevoice-wasm' : 'webspeech' });
@@ -101,7 +107,7 @@ async function start() {
   }
   micState.value = 'starting';
   sttMessage.value = '';
-  if (modelState.value === 'error') modelState.value = 'loading';
+  if (modelState.value === 'error') prepareModel(); // 실패했던 준비를 진행률 표시와 함께 다시
   try {
     await stt.start();
     modelState.value = props.engine === 'ondevice' ? 'ready' : 'idle';
@@ -185,9 +191,13 @@ onBeforeUnmount(() => {
         <b>웹 송출</b> — 브라우저 내장 음성인식을 써서 음성이 구글·애플 서버로 전송됩니다.
         이 화면을 닫거나 새로고침하면 자막이 끝납니다. 음성이 밖으로 나가면 안 되는 강의는 노트북 프로그램(음성 외부 전송 없음)을 쓰세요.
       </p>
-      <p v-if="modelState === 'loading'" class="notice model">
-        음성인식 모델 준비 중… {{ Math.round(modelProgress * 100) }}%
+      <p v-if="modelState === 'loading' && modelPhase === 'download'" class="notice model">
+        음성인식 모델 받는 중… {{ Math.round(modelProgress * 100) }}%
         <small>처음 한 번만 약 240MB를 받고, 다음부터는 이 기기에 보관된 것을 씁니다.</small>
+      </p>
+      <p v-else-if="modelState === 'loading'" class="notice model">
+        음성인식 모델 불러오는 중…
+        <small>폰에서는 30초~1분쯤 걸릴 수 있습니다. 화면을 켜 둔 채 기다려 주세요.</small>
       </p>
 
       <MicControls v-model:device-id="noDevice" :state="micState" :level="0" :devices="[]" simple @start="start" @pause="pause" @end="end" />

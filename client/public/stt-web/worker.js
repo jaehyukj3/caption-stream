@@ -3,7 +3,7 @@
  * 음성은 이 기기 밖으로 나가지 않는다. 엔진(WebAssembly)과 모델은 처음 한 번 받아 브라우저에 보관한다.
  *
  * 받는 메시지: {op:'init'} · {op:'audio', pcm: ArrayBuffer(Int16, 16kHz)} · {op:'flush'} · {op:'reset'}
- * 보내는 메시지: {op:'progress', loaded, total} · {op:'ready', cached} · {op:'error', message}
+ * 보내는 메시지: {op:'progress', loaded, total} · {op:'loading'} · {op:'ready', cached} · {op:'error', message}
  *               {op:'result', kind:'interim'|'final', text} · {op:'flushed'} · {op:'decode', ms, audioMs}
  */
 'use strict';
@@ -57,14 +57,17 @@ async function loadModelData() {
 function init() {
   if (initPromise) return initPromise;
   initPromise = (async () => {
-    const { data, manifest, cachedAll } = await loadModelData();
+    let { data, manifest, cachedAll } = await loadModelData();
+    post({ op: 'loading' }); // 받기 끝, 엔진에 모델을 읽어 들이는 중 (폰에서는 수십 초)
     await new Promise((resolve, reject) => {
       self.Module = {
         locateFile: (path) => ENGINE + path,
         // 모델 묶음(.data)은 위에서 직접 받아 둔 것을 쓴다 (25MB 제한 때문에 조각으로 나눠 둠)
         getPreloadedPackage: (_name, size) => {
           if (size !== manifest.size) throw new Error('모델 크기가 엔진과 맞지 않습니다.');
-          return data.buffer;
+          const buf = data.buffer;
+          data = null; // 엔진에 넘긴 뒤에는 이쪽 참조를 놓아 메모리를 아낀다
+          return buf;
         },
         onRuntimeInitialized: resolve,
         onAbort: (what) => reject(new Error(`음성인식 엔진 오류: ${what}`)),
@@ -104,7 +107,7 @@ function init() {
       bufferSizeInSeconds: 30,
     });
     // 엔진이 모델을 읽어 들였으니 파일 사본은 지워 메모리를 아낀다
-    for (const f of ['/sense-voice.onnx', '/silero_vad.onnx']) {
+    for (const f of ['/sense-voice.onnx', '/silero_vad.onnx', '/tokens.txt']) {
       try {
         Module.FS.unlink(f);
       } catch {

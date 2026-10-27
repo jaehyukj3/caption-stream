@@ -3,6 +3,7 @@ import type { SttDiag, SttError, SttProvider } from './SttProvider';
 
 type WorkerOut =
   | { op: 'progress'; loaded: number; total: number }
+  | { op: 'loading' }
   | { op: 'ready'; cached: boolean }
   | { op: 'error'; message: string }
   | { op: 'result'; kind: 'interim' | 'final'; text: string }
@@ -11,6 +12,10 @@ type WorkerOut =
 
 /** 폰이 느리면 마지막 문장 인식에 시간이 걸린다 */
 const FLUSH_TIMEOUT_MS = 8000;
+/** 받은 모델을 엔진에 읽어 들이는 데 이보다 오래 걸리면 멈춘 것으로 본다 */
+const LOAD_TIMEOUT_MS = 180_000;
+
+export type ModelPhase = 'download' | 'loading';
 
 // 모델(약 240MB)은 페이지가 살아 있는 동안 한 번만 읽어 들이도록 작업 스레드를 공유한다
 let worker: Worker | null = null;
@@ -19,8 +24,17 @@ const listeners = new Set<(m: WorkerOut) => void>();
 
 function getWorker(): Worker {
   if (!worker) {
-    worker = new Worker('/stt-web/worker.js');
-    worker.onmessage = (ev: MessageEvent<WorkerOut>) => listeners.forEach((l) => l(ev.data));
+    const w = new Worker('/stt-web/worker.js');
+    w.onmessage = (ev: MessageEvent<WorkerOut>) => listeners.forEach((l) => l(ev.data));
+    // 메모리 부족 등으로 작업 스레드가 죽으면 기다리지 말고 알린다. 다음 시도는 새 스레드로.
+    w.onerror = (ev) => {
+      ev.preventDefault();
+      if (worker === w) worker = null;
+      w.terminate();
+      const message = ev.message || '음성인식 엔진이 멈췄습니다 (기기 메모리가 부족할 수 있습니다)';
+      listeners.forEach((l) => l({ op: 'error', message }));
+    };
+    worker = w;
   }
   return worker;
 }
@@ -39,10 +53,13 @@ export class OnDeviceSttProvider implements SttProvider {
     !!navigator.mediaDevices?.getUserMedia;
 
   /** 모델 받기·준비. 여러 번 불러도 한 번만 받는다. 진행률은 onProgress로. */
-  static prepare(onProgress?: (loaded: number, total: number) => void): Promise<void> {
+  static prepare(onProgress?: (phase: ModelPhase, fraction: number) => void): Promise<void> {
     if (!ready) ready = OnDeviceSttProvider.load();
     if (onProgress) {
-      const l = (m: WorkerOut) => m.op === 'progress' && onProgress(m.loaded, m.total);
+      const l = (m: WorkerOut) => {
+        if (m.op === 'progress') onProgress('download', m.loaded / m.total);
+        if (m.op === 'loading') onProgress('loading', 1);
+      };
       listeners.add(l);
       ready.then(
         () => listeners.delete(l),
@@ -56,14 +73,27 @@ export class OnDeviceSttProvider implements SttProvider {
     // 브라우저가 저장 공간이 부족할 때 모델을 지우지 않도록 요청 (거절돼도 동작은 한다)
     void navigator.storage?.persist?.().catch(() => false);
     return new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const done = () => {
+        listeners.delete(l);
+        if (timer) clearTimeout(timer);
+      };
+      const fail = (message: string) => {
+        done();
+        ready = null;
+        // 멈춘 스레드는 버리고 다음 시도는 새로 시작
+        worker?.terminate();
+        worker = null;
+        reject(new Error(message));
+      };
       const l = (m: WorkerOut) => {
         if (m.op === 'ready') {
-          listeners.delete(l);
+          done();
           resolve();
         } else if (m.op === 'error') {
-          listeners.delete(l);
-          ready = null;
-          reject(new Error(m.message));
+          fail(m.message);
+        } else if (m.op === 'loading') {
+          timer = setTimeout(() => fail('모델을 읽어 들이다 멈췄습니다 (기기 메모리가 부족할 수 있습니다)'), LOAD_TIMEOUT_MS);
         }
       };
       listeners.add(l);
@@ -101,24 +131,29 @@ export class OnDeviceSttProvider implements SttProvider {
 
   async start(): Promise<void> {
     if (this.running) return;
+    this.running = true;
+    // 마이크는 버튼을 누른 그 순간에 켠다 (모델 준비를 기다린 뒤 켜면 브라우저가 소리 처리를 막을 수 있다).
+    // 모델이 준비되기 전의 소리는 버린다.
+    let engineReady = false;
+    try {
+      this.capture = await startMicCapture(this.deviceId, (pcm) => engineReady && worker?.postMessage({ op: 'audio', pcm }, [pcm]));
+    } catch (e) {
+      this.running = false;
+      throw e;
+    }
     try {
       await OnDeviceSttProvider.prepare();
     } catch (e) {
+      this.running = false;
+      this.capture?.stop();
+      this.capture = null;
       const message = `음성인식 모델을 준비하지 못했습니다: ${(e as Error).message}`;
       this.errorCb({ fatal: true, code: 'model', message });
       throw new Error(message);
     }
-    this.running = true;
     listeners.add(this.listener);
-    const w = getWorker();
-    w.postMessage({ op: 'reset' });
-    try {
-      this.capture = await startMicCapture(this.deviceId, (pcm) => w.postMessage({ op: 'audio', pcm }, [pcm]));
-    } catch (e) {
-      this.running = false;
-      listeners.delete(this.listener);
-      throw e;
-    }
+    getWorker().postMessage({ op: 'reset' });
+    engineReady = true;
     this.diagCb({ type: 'listening' });
   }
 

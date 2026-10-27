@@ -73,6 +73,12 @@ export async function startMicCapture(deviceId: string | null, onChunk: (pcm: Ar
     const mute = ctx.createGain();
     mute.gain.value = 0;
     ctx.createMediaStreamSource(media).connect(node).connect(mute).connect(ctx.destination);
+    // 버튼을 누른 직후가 아니면 안드로이드 크롬이 오디오 처리를 멈춘 상태로 만든다.
+    // 깨우기가 허용되지 않으면 기다리지 않고, 다음에 화면을 누를 때 깨운다.
+    if (ctx.state === 'suspended') {
+      await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 1500))]);
+      if (ctx.state === 'suspended') document.addEventListener('pointerdown', () => void ctx.resume(), { once: true });
+    }
   } catch (e) {
     stop();
     throw e;
