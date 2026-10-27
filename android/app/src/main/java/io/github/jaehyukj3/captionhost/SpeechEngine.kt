@@ -36,6 +36,10 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
     private var record: AudioRecord? = null
     private var thread: Thread? = null
     @Volatile private var running = false
+    /** 최근 10초 동안 인식에 넣은 소리 (진단용, 음량 맞춤 뒤) */
+    private val recent = ShortArray(SAMPLE_RATE * 10)
+    private var recentPos = 0
+    private var recentFilled = false
 
     val isLoaded get() = recognizer != null
 
@@ -137,6 +141,7 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
                     if (a > statPeak) statPeak = a
                 }
                 gain.apply(f)
+                remember(f)
                 session.accept(f, vad)
                 statSamples += n
                 if (session.speaking) statSpeech += n
@@ -155,6 +160,23 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
         } catch (e: Throwable) {
             emit(event("error").put("message", "음성인식 오류: ${e.message ?: e}"))
         }
+    }
+
+    private fun remember(f: FloatArray) = synchronized(recent) {
+        for (v in f) {
+            recent[recentPos] = (v * 32767f).toInt().toShort()
+            recentPos = (recentPos + 1) % recent.size
+            if (recentPos == 0) recentFilled = true
+        }
+    }
+
+    /** 최근 10초 소리 (16kHz 16비트, 리틀 엔디언). 마이크를 끈 뒤에도 마지막 것을 꺼낼 수 있다. */
+    fun recentPcm(): ByteArray = synchronized(recent) {
+        val n = if (recentFilled) recent.size else recentPos
+        val out = java.nio.ByteBuffer.allocate(n * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val start = if (recentFilled) recentPos else 0
+        for (i in 0 until n) out.putShort(recent[(start + i) % recent.size])
+        out.array()
     }
 
     private fun transcribe(samples: FloatArray): String {

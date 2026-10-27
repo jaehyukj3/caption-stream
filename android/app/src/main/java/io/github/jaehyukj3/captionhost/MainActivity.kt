@@ -32,7 +32,7 @@ import java.util.concurrent.Executors
  * 방 만들기·암호화·참석자 연결은 웹 송출과 똑같이 화면(자바스크립트)이 맡는다.
  *
  * 화면 ↔ 앱 연결
- *  - 화면 → 앱: window.CaptionNative.prepare() / start() / stop() / saveFile(이름, 형식, base64) / version()
+ *  - 화면 → 앱: window.CaptionNative.prepare() / start() / stop() / saveFile(이름, 형식, base64) / recentAudio() / version()
  *  - 앱 → 화면: window.__captionNative.emit({op: ...})
  */
 class MainActivity : Activity() {
@@ -271,6 +271,10 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun saveFile(name: String, mime: String, base64: String) = save(name, mime, Base64.decode(base64, Base64.DEFAULT))
+
+        /** 진단: 최근 10초 소리 (base64, 16kHz 16비트 PCM) */
+        @JavascriptInterface
+        fun recentAudio(): String = Base64.encodeToString(engine.recentPcm(), Base64.NO_WRAP)
     }
 
     private companion object {

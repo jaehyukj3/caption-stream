@@ -9,6 +9,8 @@ interface CaptionNativeApi {
   start(): void;
   stop(): void;
   saveFile(name: string, mime: string, base64: string): void;
+  /** 최근 10초 소리 (base64, 16kHz 16비트 PCM). 예전 앱에는 없다. */
+  recentAudio?(): string;
 }
 
 type NativeEvent =
@@ -104,6 +106,15 @@ export class NativeSttProvider implements SttProvider {
   }
   onError(cb: (err: SttError) => void) {
     this.errorCb = cb;
+  }
+  /** 최근 10초 동안 앱이 인식에 넣은 소리 (진단용) */
+  recentAudio(): Int16Array | null {
+    const b64 = nativeApp?.recentAudio?.();
+    if (!b64) return null;
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Int16Array(bytes.buffer);
   }
   onDiag(cb: (e: SttDiag) => void) {
     this.diagCb = cb;

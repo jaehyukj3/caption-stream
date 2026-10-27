@@ -261,6 +261,8 @@ onBeforeUnmount(() => {
 
       <div class="tools">
         <button type="button" class="btn" :disabled="!store.state.lines.length" @click="downloadCaptions(store.state.lines, code)">⤓ 자막 저장(.txt)</button>
+        <!-- 잘못 인식됐을 때 바로 눌러 그 소리를 보내 주면 원인을 재현해 볼 수 있다 -->
+        <button v-if="onDevice" type="button" class="btn" @click="saveRecentAudio">⤓ 방금 10초 소리 저장(.wav)</button>
       </div>
 
       <SessionLogPanel :log="sessionLog" :stats="stats" @save="saveLog" />
@@ -271,7 +273,6 @@ onBeforeUnmount(() => {
         <summary>진단 정보 (문제가 있을 때 이 화면을 캡처해 보내 주세요)</summary>
         <p>버전 {{ build }} · 엔진 {{ engine }} · 모델 {{ modelState }}/{{ modelPhase }} · 마이크 {{ micState }} · 권한 {{ micPermission }}</p>
         <p>{{ env }}</p>
-        <button v-if="engine === 'ondevice'" type="button" class="btn" @click="saveRecentAudio">⤓ 최근 10초 소리 저장(.wav)</button>
         <pre>{{ debugLines.join('\n') || '(기록 없음)' }}</pre>
       </details>
     </aside>
@@ -369,6 +370,7 @@ onBeforeUnmount(() => {
 }
 .tools {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .tools > .btn {
