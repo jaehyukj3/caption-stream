@@ -12,6 +12,7 @@ import { useSessionLog } from '../../composables/useSessionLog';
 import { usePreferences } from '../../composables/usePreferences';
 import { useWakeLock } from '../../composables/useWakeLock';
 import { createSttProvider } from '../../stt';
+import { micErrorMessage } from '../../stt/micCapture';
 import { OnDeviceSttProvider, type ModelPhase } from '../../stt/OnDeviceSttProvider';
 import { downloadCaptions } from '../../utils/download';
 import CaptionView from '../caption/CaptionView.vue';
@@ -20,6 +21,7 @@ import MicControls, { type MicState } from './MicControls.vue';
 import SessionLogPanel from './SessionLogPanel.vue';
 import SessionPanel from './SessionPanel.vue';
 
+const build = __BUILD__;
 const props = withDefaults(defineProps<{ engine?: 'webspeech' | 'ondevice' }>(), { engine: 'webspeech' });
 const emit = defineEmits<{ newSession: [] }>();
 
@@ -108,13 +110,24 @@ async function start() {
   micState.value = 'starting';
   sttMessage.value = '';
   if (modelState.value === 'error') prepareModel(); // 실패했던 준비를 진행률 표시와 함께 다시
+  // 권한 창을 놓쳤거나 마이크가 응답하지 않으면 무한정 조용히 기다리게 되므로 안내한다
+  const slow = setTimeout(() => {
+    if (micState.value === 'starting' && modelState.value !== 'loading')
+      sttMessage.value = '마이크를 켜는 중입니다. 마이크 권한을 묻는 창이 떴다면 허용해 주세요.';
+  }, 8000);
   try {
     await stt.start();
     modelState.value = props.engine === 'ondevice' ? 'ready' : 'idle';
     micState.value = 'running';
-  } catch {
+    if (sttMessage.value.startsWith('마이크를 켜는 중')) sttMessage.value = '';
+  } catch (e) {
     micState.value = 'paused';
+    sttMessage.value = sttMessage.value.startsWith('마이크를 켜는 중') ? '' : sttMessage.value;
+    // 음성인식 쪽 오류는 onError가 이미 보여 준다. 마이크를 켜다 실패한 경우는 여기서 이유를 보여 준다.
+    sttMessage.value ||= micErrorMessage(e);
+    sessionLog.stt({ type: 'error', detail: `start: ${(e as Error)?.name ?? ''} ${(e as Error)?.message ?? e}` });
   }
+  clearTimeout(slow);
 }
 
 async function pause() {
@@ -191,6 +204,7 @@ onBeforeUnmount(() => {
         <b>웹 송출</b> — 브라우저 내장 음성인식을 써서 음성이 구글·애플 서버로 전송됩니다.
         이 화면을 닫거나 새로고침하면 자막이 끝납니다. 음성이 밖으로 나가면 안 되는 강의는 노트북 프로그램(음성 외부 전송 없음)을 쓰세요.
       </p>
+      <p class="build muted">버전 {{ build }}</p>
       <p v-if="modelState === 'loading' && modelPhase === 'download'" class="notice model">
         음성인식 모델 받는 중… {{ Math.round(modelProgress * 100) }}%
         <small>처음 한 번만 약 240MB를 받고, 다음부터는 이 기기에 보관된 것을 씁니다.</small>
@@ -271,6 +285,11 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   padding-bottom: 8px;
+}
+.build {
+  margin: -8px 0 0;
+  font-size: 11px;
+  text-align: right;
 }
 .model small {
   display: block;

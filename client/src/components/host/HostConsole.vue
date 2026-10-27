@@ -8,6 +8,7 @@ import { usePreferences } from '../../composables/usePreferences';
 import { useRoomSocket } from '../../composables/useRoomSocket';
 import { useSessionLog } from '../../composables/useSessionLog';
 import { createSttProvider, sttKindFromUrl } from '../../stt';
+import { micErrorMessage } from '../../stt/micCapture';
 import { downloadCaptions } from '../../utils/download';
 import { throttle } from '../../utils/throttle';
 import CaptionView from '../caption/CaptionView.vue';
@@ -132,13 +133,7 @@ async function start() {
     mic.stop();
     await stt.stop();
     micState.value = 'paused';
-    const name = (e as DOMException).name;
-    sttMessage.value ||=
-      name === 'NotAllowedError'
-        ? '마이크 권한이 거부되었습니다. 주소창 왼쪽의 아이콘에서 마이크를 허용해 주세요.'
-        : name === 'NotFoundError'
-          ? '마이크를 찾을 수 없습니다.'
-          : `마이크를 시작하지 못했습니다: ${(e as Error).message}`;
+    sttMessage.value ||= micErrorMessage(e);
   }
 }
 

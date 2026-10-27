@@ -39,6 +39,16 @@ class PcmCapture extends AudioWorkletProcessor {
 registerProcessor('pcm-capture', PcmCapture);
 `;
 
+/** 마이크를 켜지 못했을 때 사용자에게 보여 줄 설명 */
+export function micErrorMessage(e: unknown): string {
+  const name = (e as DOMException)?.name;
+  if (name === 'NotAllowedError' || name === 'SecurityError')
+    return '마이크 권한이 거부되었습니다. 주소창 왼쪽 아이콘(또는 크롬 설정 → 사이트 설정 → 마이크)에서 허용해 주세요.';
+  if (name === 'NotFoundError') return '마이크를 찾을 수 없습니다.';
+  if (name === 'NotReadableError' || name === 'AbortError') return '다른 앱이 마이크를 쓰고 있어 켤 수 없습니다. 통화·녹음·음성 비서 앱을 닫고 다시 시도해 주세요.';
+  return `마이크를 시작하지 못했습니다 (${name || 'Error'}: ${(e as Error)?.message ?? e})`;
+}
+
 export interface MicCapture {
   stop(): void;
 }
