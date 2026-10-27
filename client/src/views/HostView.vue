@@ -4,6 +4,7 @@ import type { CreateRoomResponse, SttStatusResponse } from '@caption/shared';
 import HostConsole from '../components/host/HostConsole.vue';
 import WebHostConsole from '../components/host/WebHostConsole.vue';
 import { usePreferences } from '../composables/usePreferences';
+import { useUpdateCheck } from '../composables/useUpdateCheck';
 import { createSttProvider, sttKindFromUrl } from '../stt';
 import { readJson, writeJson } from '../utils/storage';
 
@@ -11,6 +12,7 @@ import { readJson, writeJson } from '../utils/storage';
 const KEY = 'caption.host';
 
 const { prefs, toggleTheme } = usePreferences(26);
+const update = useUpdateCheck();
 const session = ref<CreateRoomResponse | null>(null);
 const checking = ref(true);
 const creating = ref(false);
@@ -104,6 +106,10 @@ function onInvalid() {
         {{ prefs.theme === 'dark' ? '☀' : '☾' }}
       </button>
     </header>
+    <p v-if="update.outdated.value" class="notice is-error update" role="alert">
+      새 버전({{ update.latest.value }})이 있습니다. 지금 화면은 예전 버전입니다.
+      <button type="button" class="btn btn-primary" @click="update.reload">새로고침</button>
+    </p>
 
     <HostConsole
       v-if="session"
@@ -179,6 +185,13 @@ function onInvalid() {
   align-items: center;
   justify-content: space-between;
   padding: 12px 0;
+}
+.update {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
 }
 .brand {
   font-weight: 800;

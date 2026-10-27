@@ -16,9 +16,21 @@ function buildVersion(): string {
   }
 }
 
+const BUILD = buildVersion();
+
 export default defineConfig({
-  plugins: [vue(), ...(https ? [basicSsl()] : [])],
-  define: { __BUILD__: JSON.stringify(buildVersion()) },
+  plugins: [
+    vue(),
+    ...(https ? [basicSsl()] : []),
+    // 화면이 예전 버전인지 알 수 있게 최신 버전 번호를 파일로 둔다 (/version.json)
+    {
+      name: 'version-file',
+      generateBundle() {
+        this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ build: BUILD }) });
+      },
+    },
+  ],
+  define: { __BUILD__: JSON.stringify(BUILD) },
   server: {
     port: 5173,
     proxy: {
