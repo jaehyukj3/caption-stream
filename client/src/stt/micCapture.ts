@@ -23,11 +23,11 @@ class PcmCapture extends AudioWorkletProcessor {
     super();
     const o = (options && options.processorOptions) || {};
     // floor: 이보다 작은 소리는 말소리로 보지 않음 · maxGain: 최대 증폭 배율
-    this.floor = o.floor || 0.004; this.maxGain = o.maxGain || 8;
+    this.floor = o.floor || 0.004; this.maxGain = o.maxGain || 8; this.fixed = !!o.fixedGain;
     this.buf = new Int16Array(CHUNK); this.n = 0; this.env = TARGET; this.gain = 1;
     this.sSum = 0; this.sPeak = 0; this.sN = 0;
     // sampleRate: 이 오디오 처리의 실제 속도 (AudioWorklet 전역 값)
-    this.ratio = sampleRate / ${STT_SAMPLE_RATE}; this.pos = 0;
+    this.ratio = sampleRate / ${STT_SAMPLE_RATE};
     // 16kHz로 줄이기 전 저역 통과 필터 (차단 7.2kHz, Blackman 창 windowed-sinc)
     const taps = (Math.round(this.ratio * 21) | 1);
     this.kernel = new Float32Array(taps);
@@ -41,6 +41,8 @@ class PcmCapture extends AudioWorkletProcessor {
     }
     for (let i = 0; i < taps; i++) this.kernel[i] /= sum;
     this.hist = new Float32Array(taps); this.h = 0;
+    // 출력 시각(입력 샘플 단위)과 직전 필터 값: 44.1kHz처럼 나누어떨어지지 않는 경우 정확한 시각에서 보간
+    this.t = 0; this.i = 0; this.prevY = 0;
   }
   push(s) {
     this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
@@ -64,21 +66,27 @@ class PcmCapture extends AudioWorkletProcessor {
       }
       const FLOOR = this.floor, MAX_GAIN = this.maxGain;
       if (rms > FLOOR) this.env = this.env * 0.995 + rms * 0.005;
-      const want = Math.min(MAX_GAIN, Math.max(MIN_GAIN, TARGET / this.env));
+      const want = this.fixed ? 1 : Math.min(MAX_GAIN, Math.max(MIN_GAIN, TARGET / this.env));
       this.gain += (want - this.gain) * 0.01;
       const passThrough = Math.abs(this.ratio - 1) < 0.001;
       for (let i = 0; i < ch.length; i++) {
         const s = Math.max(-1, Math.min(1, ch[i] * this.gain));
         if (passThrough) { this.push(s); continue; }
-        // 필터 이력에 넣고, 16kHz 한 샘플 간격마다 필터를 거친 값을 내보낸다
+        // 모든 입력 샘플에 저역 통과 필터를 걸고, 16kHz 출력 시각마다 앞뒤 값을 보간해 내보낸다
+        // (가장 가까운 샘플만 고르면 44.1kHz에서 시각이 들쭉날쭉해져 인식 결과가 음절마다 끊겼다)
         const hist = this.hist, k = this.kernel, n = k.length;
-        hist[this.h] = s; this.h = (this.h + 1) % n; this.pos++;
-        if (this.pos >= this.ratio) {
-          let acc = 0;
-          for (let j = 0, idx = this.h; j < n; j++, idx = idx + 1 === n ? 0 : idx + 1) acc += hist[idx] * k[j];
-          this.push(acc);
-          this.pos -= this.ratio;
+        hist[this.h] = s; this.h = (this.h + 1) % n;
+        let y = 0;
+        for (let j = 0, idx = this.h; j < n; j++, idx = idx + 1 === n ? 0 : idx + 1) y += hist[idx] * k[j];
+        while (this.t <= this.i) {
+          const frac = this.t - (this.i - 1);
+          this.push(this.prevY + (y - this.prevY) * frac);
+          this.t += this.ratio;
         }
+        this.prevY = y;
+        this.i++;
+        // 오래 켜 두어도 소수점 오차가 쌓이지 않게 기준을 당겨 둔다
+        if (this.i > 1e6) { this.i -= 1e6; this.t -= 1e6; }
       }
     }
     return true;
@@ -137,6 +145,9 @@ export function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 }
 
+/** 휴대폰에서 브라우저 잡음 제거를 켤지 (측정으로 정함) */
+const MOBILE_NOISE_SUPPRESSION = false;
+
 const dbfs = (x: number) => (x > 0 ? Math.round(20 * Math.log10(x)) : -120);
 
 /** 마이크를 켜고 16kHz Int16 PCM을 100ms마다 onChunk로 넘긴다 */
@@ -147,17 +158,24 @@ export async function startMicCapture(
 ): Promise<MicCapture> {
   // 노트북: 브라우저 잡음 제거·자동 음량은 인식률을 떨어뜨려 끈다 (실측: 끝음절 누락, 오인식 증가)
   dlog(`마이크 요청 (getUserMedia, ${options.mobile ? '휴대폰 설정' : '노트북 설정'})`);
+  // 실험용: 주소에 ?ns=1 / ?agc=0 을 붙이면 브라우저 잡음 제거·자동 음량을 바꿔 볼 수 있다
+  const q = new URLSearchParams(location.search);
+  const ns = q.has('ns') ? q.get('ns') === '1' : !!options.mobile && MOBILE_NOISE_SUPPRESSION;
+  const agc = q.has('agc') ? q.get('agc') === '1' : !!options.mobile;
   const media = await navigator.mediaDevices.getUserMedia({
     audio: {
       deviceId: deviceId ? { exact: deviceId } : undefined,
       channelCount: 1,
       echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: !!options.mobile,
+      noiseSuppression: ns,
+      autoGainControl: agc,
     },
   });
+  dlog(`브라우저 처리: 잡음 제거 ${ns ? '켬' : '끔'}, 자동 음량 ${agc ? '켬' : '끔'}`);
   dlog(`마이크 열림: ${media.getAudioTracks()[0]?.label || '이름 없음'}`);
-  const ctx = options.mobile ? new AudioContext() : new AudioContext({ sampleRate: STT_SAMPLE_RATE });
+  // 실험용: ?ctxrate=48000 으로 오디오 처리 속도를 정해 볼 수 있다
+  const ctxRate = Number(q.get('ctxrate')) || undefined;
+  const ctx = options.mobile ? new AudioContext(ctxRate ? { sampleRate: ctxRate } : {}) : new AudioContext({ sampleRate: STT_SAMPLE_RATE });
   dlog(`오디오 처리 생성: ${ctx.state}, ${ctx.sampleRate}Hz`);
   const stop = () => {
     media.getTracks().forEach((t) => t.stop());
@@ -173,7 +191,7 @@ export async function startMicCapture(
     const node = new AudioWorkletNode(ctx, 'pcm-capture', {
       // 휴대폰은 브라우저 자동 음량이 이미 크기를 맞춰 주므로 거의 키우지 않는다 (더 키우면 말소리 끝이 잘림).
       // 잡음 수준(-50dB) 아래는 기준에서 빼서 말 사이 잡음도 키우지 않는다.
-      processorOptions: options.mobile ? { floor: 0.003, maxGain: 3 } : {},
+      processorOptions: options.mobile ? { floor: 0.003, maxGain: 3, fixedGain: q.get('gain') === 'off' } : {},
     });
     node.port.onmessage = (ev: MessageEvent<ArrayBuffer | { stats: true; rms: number; peak: number; gain: number }>) => {
       const d = ev.data;
