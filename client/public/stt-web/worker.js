@@ -18,6 +18,8 @@ const MIN_INTERIM_SAMPLES = SAMPLE_RATE * 0.5;
 const MIN_INTERIM_INTERVAL_MS = 700;
 
 const post = (m) => self.postMessage(m);
+/** 진단: 엔진이 실제로 받은 소리 (3초마다 알림) */
+const rx = { chunks: 0, samples: 0, peak: 0, speechSamples: 0, nonFinite: 0, since: Date.now() };
 let recognizer = null;
 let vad = null;
 let initPromise = null;
@@ -243,11 +245,25 @@ self.onmessage = (ev) => {
         void init();
         break;
       case 'audio': {
-        if (!recognizer) return;
+        if (!recognizer) {
+          rx.chunks++; // 엔진 준비 전에 온 소리
+          return;
+        }
         const pcm = new Int16Array(m.pcm);
         const f = new Float32Array(pcm.length);
-        for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768;
+        for (let i = 0; i < pcm.length; i++) {
+          f[i] = pcm[i] / 32768;
+          const a = Math.abs(f[i]);
+          if (a > rx.peak) rx.peak = a;
+        }
+        rx.chunks++;
+        rx.samples += pcm.length;
         session.accept(f);
+        if (session.speaking) rx.speechSamples += pcm.length;
+        if (Date.now() - rx.since >= 3000) {
+          post({ op: 'rx', chunks: rx.chunks, seconds: rx.samples / SAMPLE_RATE, peak: rx.peak, speech: rx.speechSamples / SAMPLE_RATE, ready: !!recognizer });
+          rx.chunks = 0; rx.samples = 0; rx.peak = 0; rx.speechSamples = 0; rx.since = Date.now();
+        }
         break;
       }
       case 'flush':

@@ -5,6 +5,7 @@ import type { SttDiag, SttError, SttProvider } from './SttProvider';
 type WorkerOut =
   | { op: 'progress'; loaded: number; total: number }
   | { op: 'loading' }
+  | { op: 'rx'; chunks: number; seconds: number; peak: number; speech: number; ready: boolean }
   | { op: 'ready'; cached: boolean }
   | { op: 'error'; message: string }
   | { op: 'result'; kind: 'interim' | 'final'; text: string }
@@ -34,6 +35,7 @@ function getWorker(): Worker {
         if (pct !== lastPct) dlog(`모델 받기 ${(lastPct = pct)}%`);
       } else if (m.op === 'loading' || m.op === 'error' || m.op === 'flushed') dlog(`엔진: ${m.op}${m.op === 'error' ? ` ${m.message}` : ''}`);
       else if (m.op === 'ready') dlog(`엔진: 준비 완료 (보관분 사용: ${m.cached})`);
+      else if (m.op === 'rx') dlog(`엔진이 받은 소리: ${m.chunks}조각 ${m.seconds.toFixed(1)}초, 최대 ${m.peak.toFixed(2)}, 말소리 감지 ${m.speech.toFixed(1)}초`);
       listeners.forEach((l) => l(m));
     };
     // 메모리 부족 등으로 작업 스레드가 죽으면 기다리지 말고 알린다. 다음 시도는 새 스레드로.
@@ -155,8 +157,18 @@ export class OnDeviceSttProvider implements SttProvider {
     // 마이크는 버튼을 누른 그 순간에 켠다 (모델 준비를 기다린 뒤 켜면 브라우저가 소리 처리를 막을 수 있다).
     // 모델이 준비되기 전의 소리는 버린다.
     let engineReady = false;
+    let sent = 0;
+    const send = (pcm: ArrayBuffer) => {
+      if (!engineReady) return;
+      if (!worker) {
+        if (sent++ === 0) dlog('소리를 보낼 엔진이 없습니다 (엔진 스레드가 사라짐)');
+        return;
+      }
+      if (sent++ === 0) dlog('엔진으로 소리 보내기 시작');
+      worker.postMessage({ op: 'audio', pcm }, [pcm]);
+    };
     try {
-      this.capture = await startMicCapture(this.deviceId, (pcm) => engineReady && worker?.postMessage({ op: 'audio', pcm }, [pcm]), {
+      this.capture = await startMicCapture(this.deviceId, send, {
         mobile: isMobileDevice(),
       });
       this.lastCapture = this.capture;
