@@ -84,11 +84,12 @@ jobs:
         run: |
           expected=$(stat -c %s client/dist/app/caption-host.apk)
           for i in 1 2 3 4 5 6; do
-            got=$(curl -fsSI "$RELAY_URL/download/android" | tr -d '\r' | awk 'tolower($1)=="content-length:"{print $2}')
-            [ "$got" = "$expected" ] && { echo "::notice title=android::$RELAY_URL/download/android"; exit 0; }
+            got=$(curl -sS "$RELAY_URL/download/android" -o check.apk -w '%{http_code} %{size_download}')
+            [ "$got" = "200 $expected" ] && cmp -s check.apk client/dist/app/caption-host.apk && { echo "::notice title=android::$RELAY_URL/download/android"; exit 0; }
             sleep 10
           done
-          echo "::error title=android::$RELAY_URL/download/android 크기가 다릅니다 ($got, 기대 $expected)"; exit 1
+          head=$(curl -sSI "$RELAY_URL/download/android" | tr -d '\r' | tr '\n' ' ')
+          echo "::error title=android::$RELAY_URL/download/android 내려받기 확인 실패 (받은 것: $got, 기대 크기 $expected) $head"; exit 1
       - name: Check download
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         run: |

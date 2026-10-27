@@ -25,7 +25,7 @@ export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const path = new URL(req.url).pathname;
     if (path === '/download' || path === '/download/') return serveDownload(req, env, ctx);
-    if (path === '/download/android' || path === '/download/android/') return serveApk(req, env);
+    if (path === '/download/android' || path === '/download/android/') return serveApk(req, env, ctx);
     const m = RID.exec(path);
     if (!m) return env.ASSETS.fetch(req);
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('websocket only', { status: 426 });
@@ -77,24 +77,30 @@ async function serveDownload(req: Request, env: Env, ctx: ExecutionContext): Pro
   return new Response(readable, { headers });
 }
 
-/** 안드로이드 송출 앱 (android/, 빌드 결과는 /app/caption-host.apk) */
-async function serveApk(req: Request, env: Env): Promise<Response> {
-  const res = await env.ASSETS.fetch(new URL('/app/caption-host.apk', req.url));
+/** 안드로이드 송출 앱 (android/, 빌드 결과는 /app/caption-host.apk, 크기는 /app/version.json) */
+async function serveApk(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const info = await env.ASSETS.fetch(new URL('/app/version.json', req.url));
   // 없으면 화면(index.html)이 대신 오므로 형식으로 구분
-  if (!res.ok || !res.body || res.headers.get('content-type')?.includes('text/html')) {
+  if (!info.ok || !info.headers.get('content-type')?.includes('json')) {
     return new Response('안드로이드 앱을 준비하는 중입니다. 잠시 후 다시 시도해 주세요.', {
       status: 404,
       headers: { 'content-type': 'text/plain; charset=utf-8' },
     });
   }
-  const headers = new Headers({
+  const { size, versionName } = (await info.json()) as { size: number; versionName: string };
+  const headers = {
     'content-type': 'application/vnd.android.package-archive',
-    'content-disposition': 'attachment; filename="caption-host.apk"',
+    'content-length': String(size),
+    'content-disposition': `attachment; filename="caption-host-${versionName}.apk"`,
     'cache-control': 'no-cache',
-  });
-  const length = res.headers.get('content-length');
-  if (length) headers.set('content-length', length);
-  return new Response(req.method === 'HEAD' ? null : res.body, { headers });
+  };
+  if (req.method === 'HEAD') return new Response(null, { headers });
+  const res = await env.ASSETS.fetch(new URL('/app/caption-host.apk', req.url));
+  if (!res.ok || !res.body) return new Response('앱 파일을 찾지 못했습니다.', { status: 404 });
+  // 크기를 알려 줘야 폰 브라우저가 진행률을 보여 주고 끝까지 받았는지 확인한다
+  const { readable, writable } = new FixedLengthStream(size);
+  ctx.waitUntil(res.body.pipeTo(writable).catch(() => {}));
+  return new Response(readable, { headers });
 }
 
 export class RelayRoom extends DurableObject<Env> {
