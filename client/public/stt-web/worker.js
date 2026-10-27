@@ -95,7 +95,9 @@ function init() {
     vad = createVad(Module, {
       sileroVad: {
         model: './silero_vad.onnx',
-        threshold: 0.5,
+        // 노트북(0.5)보다 낮춘다: 휴대폰 마이크 소리는 말 사이에도 잡음이 깔려 0.5에서는 짧은 조각만 잡힌다
+        // (실제 휴대폰 녹음: 0.5 → 2.5초 조각 둘 "まイク？", 0.35 → 4.6초 한 문장 "마이크 시작 말씀하시면…")
+        threshold: 0.35,
         minSilenceDuration: 0.5, // 0.5초 쉬면 문장 확정
         minSpeechDuration: 0.25,
         maxSpeechDuration: 12, // 쉬지 않고 말해도 12초마다 끊어서 확정

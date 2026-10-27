@@ -150,7 +150,9 @@ export async function startMicCapture(
       URL.revokeObjectURL(url);
     }
     const node = new AudioWorkletNode(ctx, 'pcm-capture', {
-      processorOptions: options.mobile ? { floor: 0.0005, maxGain: 32 } : {},
+      // 휴대폰은 브라우저 자동 음량이 켜져 있어 크게 키울 필요가 없다. 말 사이 잡음을 키우지 않도록
+      // 잡음 수준(-50dB) 아래는 기준에서 빼고 최대 8배까지만.
+      processorOptions: options.mobile ? { floor: 0.003, maxGain: 8 } : {},
     });
     node.port.onmessage = (ev: MessageEvent<ArrayBuffer | { stats: true; rms: number; peak: number; gain: number }>) => {
       const d = ev.data;
