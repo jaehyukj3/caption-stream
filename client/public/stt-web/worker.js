@@ -137,6 +137,47 @@ function transcribe(samples) {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * 확정 결과가 문장 앞부분을 빠뜨렸으면(예: 중간 "문을 닫습니다" → 확정 "닫습니다") 마지막 중간 결과의 앞부분으로 채운다.
+ * SenseVoice는 같은 말소리라도 끝까지 넣고 다시 인식하면 앞 어절을 빼먹을 때가 있다 (잡음 많은 소리에서 잦음).
+ * 확정 결과가 중간 결과의 뒷부분과 맞아떨어질 때만 채우고, 전혀 다른 문장이면 확정 결과를 그대로 쓴다.
+ */
+function mergeFinal(interim, final) {
+  const fi = normText(final);
+  const it = normText(interim);
+  if (!it || fi.length >= it.length * 0.8) return final;
+  if (!fi) return interim;
+  let best = -1;
+  let bestRatio = Infinity;
+  for (let p = 1; p < interim.length; p++) {
+    if (interim[p - 1] !== ' ') continue; // 어절 경계에서만
+    const a = normText(interim.slice(p));
+    if (!a) continue;
+    let cost = Infinity;
+    for (let k = Math.max(1, a.length - 2); k <= Math.min(fi.length, a.length + 2); k++) cost = Math.min(cost, editDistance(a, fi.slice(0, k)));
+    const ratio = cost / a.length;
+    if (ratio <= 0.34 && ratio < bestRatio) {
+      best = p;
+      bestRatio = ratio;
+    }
+  }
+  return best < 0 ? final : `${interim.slice(0, best).trim()} ${final}`;
+}
+
+function normText(s) {
+  return s.replace(/[\s.,?!·…~"'()]/g, '');
+}
+
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
 function concat(parts) {
   const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
   let o = 0;
@@ -221,7 +262,8 @@ const session = {
     }
   },
 
-  emitFinal(text) {
+  emitFinal(raw) {
+    const text = mergeFinal(this.lastInterim, raw);
     this.lastInterim = '';
     if (text) post({ op: 'result', kind: 'final', text });
   },

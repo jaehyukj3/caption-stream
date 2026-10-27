@@ -246,7 +246,8 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             }
         }
 
-        fun emitFinal(text: String) {
+        fun emitFinal(raw: String) {
+            val text = mergeFinal(lastInterim, raw)
             lastInterim = ""
             if (text.isNotEmpty()) emit(event("result").put("kind", "final").put("text", text))
         }
@@ -309,6 +310,47 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
         private const val MIN_INTERIM_INTERVAL_MS = 700L
 
         fun event(op: String): JSONObject = JSONObject().put("op", op)
+
+        /**
+         * 확정 결과가 문장 앞부분을 빠뜨렸으면(예: 중간 "문을 닫습니다" → 확정 "닫습니다") 마지막 중간 결과의 앞부분으로 채운다.
+         * SenseVoice는 같은 말소리라도 끝까지 넣고 다시 인식하면 앞 어절을 빼먹을 때가 있다 (잡음 많은 소리에서 잦음).
+         * 확정 결과가 중간 결과의 뒷부분과 맞아떨어질 때만 채우고, 전혀 다른 문장이면 확정 결과를 그대로 쓴다.
+         */
+        fun mergeFinal(interim: String, final: String): String {
+            val fi = normText(final)
+            val it = normText(interim)
+            if (it.isEmpty() || fi.length >= it.length * 0.8) return final
+            if (fi.isEmpty()) return interim
+            var best = -1
+            var bestRatio = Double.MAX_VALUE
+            for (p in 1 until interim.length) {
+                if (interim[p - 1] != ' ') continue // 어절 경계에서만
+                val a = normText(interim.substring(p))
+                if (a.isEmpty()) continue
+                var cost = Int.MAX_VALUE
+                for (k in max(1, a.length - 2)..min(fi.length, a.length + 2)) cost = min(cost, editDistance(a, fi.substring(0, k)))
+                val ratio = cost.toDouble() / a.length
+                if (ratio <= 0.34 && ratio < bestRatio) {
+                    best = p
+                    bestRatio = ratio
+                }
+            }
+            return if (best < 0) final else "${interim.substring(0, best).trim()} $final"
+        }
+
+        private val PUNCT = Regex("[\\s.,?!·…~\"'()]")
+        private fun normText(s: String) = s.replace(PUNCT, "")
+
+        private fun editDistance(a: String, b: String): Int {
+            var prev = IntArray(b.length + 1) { it }
+            for (i in 1..a.length) {
+                val cur = IntArray(b.length + 1)
+                cur[0] = i
+                for (j in 1..b.length) cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+                prev = cur
+            }
+            return prev[b.length]
+        }
 
         private fun concat(parts: List<FloatArray>): FloatArray {
             val out = FloatArray(parts.sumOf { it.size })
