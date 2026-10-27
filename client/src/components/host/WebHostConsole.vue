@@ -13,6 +13,7 @@ import { usePreferences } from '../../composables/usePreferences';
 import { useWakeLock } from '../../composables/useWakeLock';
 import { createSttProvider } from '../../stt';
 import { micErrorMessage } from '../../stt/micCapture';
+import { debugLines, dlog } from '../../utils/debugLog';
 import { OnDeviceSttProvider, type ModelPhase } from '../../stt/OnDeviceSttProvider';
 import { downloadCaptions } from '../../utils/download';
 import CaptionView from '../caption/CaptionView.vue';
@@ -22,6 +23,19 @@ import SessionLogPanel from './SessionLogPanel.vue';
 import SessionPanel from './SessionPanel.vue';
 
 const build = __BUILD__;
+/** 진단: 이 사이트의 마이크 권한 상태 (granted / denied / prompt) */
+const micPermission = ref('확인 중');
+async function refreshMicPermission() {
+  try {
+    const st = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+    micPermission.value = st.state;
+    st.onchange = () => (micPermission.value = st.state);
+  } catch {
+    micPermission.value = '확인 불가';
+  }
+}
+void refreshMicPermission();
+const env = `${navigator.userAgent.match(/Android [\d.]+|iPhone OS [\d_]+|Windows NT [\d.]+|Mac OS X [\d_]+/)?.[0] ?? ''} · Chrome ${navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] ?? '?'} · 메모리 ${(navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? '?'}GB · 보안연결 ${window.isSecureContext ? '예' : '아니오'}`;
 const props = withDefaults(defineProps<{ engine?: 'webspeech' | 'ondevice' }>(), { engine: 'webspeech' });
 const emit = defineEmits<{ newSession: [] }>();
 
@@ -104,9 +118,12 @@ stt.onError((err) => {
 
 async function start() {
   if (!stt.isSupported) {
+    dlog('이 브라우저에서 지원하지 않는 방식 (isSupported=false)');
     sttMessage.value = '이 브라우저는 음성인식을 지원하지 않습니다. 안드로이드·PC는 크롬, 아이폰은 사파리를 사용해 주세요.';
     return;
   }
+  dlog(`[마이크 시작] 누름 (엔진 ${props.engine}, 모델 ${modelState.value})`);
+  void refreshMicPermission();
   micState.value = 'starting';
   sttMessage.value = '';
   if (modelState.value === 'error') prepareModel(); // 실패했던 준비를 진행률 표시와 함께 다시
@@ -126,6 +143,7 @@ async function start() {
     // 음성인식 쪽 오류는 onError가 이미 보여 준다. 마이크를 켜다 실패한 경우는 여기서 이유를 보여 준다.
     sttMessage.value ||= micErrorMessage(e);
     sessionLog.stt({ type: 'error', detail: `start: ${(e as Error)?.name ?? ''} ${(e as Error)?.message ?? e}` });
+    dlog(`시작 실패: ${(e as Error)?.name ?? ''} ${(e as Error)?.message ?? e}`);
   }
   clearTimeout(slow);
 }
@@ -231,6 +249,13 @@ onBeforeUnmount(() => {
       <SessionLogPanel :log="sessionLog" :stats="stats" @save="saveLog" />
 
       <DictionaryEditor :entries="dict.entries.value" @add="dict.add" @remove="dict.remove" />
+
+      <details class="card diag">
+        <summary>진단 정보 (문제가 있을 때 이 화면을 캡처해 보내 주세요)</summary>
+        <p>버전 {{ build }} · 엔진 {{ engine }} · 모델 {{ modelState }}/{{ modelPhase }} · 마이크 {{ micState }} · 권한 {{ micPermission }}</p>
+        <p>{{ env }}</p>
+        <pre>{{ debugLines.join('\n') || '(기록 없음)' }}</pre>
+      </details>
     </aside>
   </div>
 </template>
@@ -285,6 +310,23 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   padding-bottom: 8px;
+}
+.diag {
+  font-size: 12px;
+}
+.diag summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.diag p {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+.diag pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 .build {
   margin: -8px 0 0;

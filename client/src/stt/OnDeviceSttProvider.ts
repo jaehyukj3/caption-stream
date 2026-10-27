@@ -1,3 +1,4 @@
+import { dlog } from '../utils/debugLog';
 import { startMicCapture, type MicCapture } from './micCapture';
 import type { SttDiag, SttError, SttProvider } from './SttProvider';
 
@@ -25,13 +26,23 @@ const listeners = new Set<(m: WorkerOut) => void>();
 function getWorker(): Worker {
   if (!worker) {
     const w = new Worker('/stt-web/worker.js');
-    w.onmessage = (ev: MessageEvent<WorkerOut>) => listeners.forEach((l) => l(ev.data));
+    let lastPct = -1;
+    w.onmessage = (ev: MessageEvent<WorkerOut>) => {
+      const m = ev.data;
+      if (m.op === 'progress') {
+        const pct = Math.floor((m.loaded / m.total) * 10) * 10;
+        if (pct !== lastPct) dlog(`모델 받기 ${(lastPct = pct)}%`);
+      } else if (m.op === 'loading' || m.op === 'error' || m.op === 'flushed') dlog(`엔진: ${m.op}${m.op === 'error' ? ` ${m.message}` : ''}`);
+      else if (m.op === 'ready') dlog(`엔진: 준비 완료 (보관분 사용: ${m.cached})`);
+      listeners.forEach((l) => l(m));
+    };
     // 메모리 부족 등으로 작업 스레드가 죽으면 기다리지 말고 알린다. 다음 시도는 새 스레드로.
     w.onerror = (ev) => {
       ev.preventDefault();
       if (worker === w) worker = null;
       w.terminate();
       const message = ev.message || '음성인식 엔진이 멈췄습니다 (기기 메모리가 부족할 수 있습니다)';
+      dlog(`엔진 스레드 오류: ${message}`);
       listeners.forEach((l) => l({ op: 'error', message }));
     };
     worker = w;
@@ -72,6 +83,7 @@ export class OnDeviceSttProvider implements SttProvider {
   private static load(): Promise<void> {
     // 브라우저가 저장 공간이 부족할 때 모델을 지우지 않도록 요청 (거절돼도 동작은 한다)
     void navigator.storage?.persist?.().catch(() => false);
+    dlog('엔진 준비 시작');
     return new Promise<void>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
       const done = () => {
@@ -131,6 +143,7 @@ export class OnDeviceSttProvider implements SttProvider {
 
   async start(): Promise<void> {
     if (this.running) return;
+    dlog('기기 안 인식 시작');
     this.running = true;
     // 마이크는 버튼을 누른 그 순간에 켠다 (모델 준비를 기다린 뒤 켜면 브라우저가 소리 처리를 막을 수 있다).
     // 모델이 준비되기 전의 소리는 버린다.

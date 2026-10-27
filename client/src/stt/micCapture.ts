@@ -1,4 +1,5 @@
 import { STT_SAMPLE_RATE } from '@caption/shared';
+import { dlog } from '../utils/debugLog';
 
 /**
  * 마이크 소리를 16kHz PCM(Int16)으로 100ms씩 잘라 보내는 AudioWorklet.
@@ -56,6 +57,7 @@ export interface MicCapture {
 /** 마이크를 켜고 16kHz Int16 PCM을 100ms마다 onChunk로 넘긴다 */
 export async function startMicCapture(deviceId: string | null, onChunk: (pcm: ArrayBuffer) => void): Promise<MicCapture> {
   // 브라우저 잡음 제거·자동 음량은 인식률을 떨어뜨려 끈다 (실측: 끝음절 누락, 오인식 증가)
+  dlog('마이크 요청 (getUserMedia)');
   const media = await navigator.mediaDevices.getUserMedia({
     audio: {
       deviceId: deviceId ? { exact: deviceId } : undefined,
@@ -65,7 +67,9 @@ export async function startMicCapture(deviceId: string | null, onChunk: (pcm: Ar
       autoGainControl: false,
     },
   });
+  dlog(`마이크 열림: ${media.getAudioTracks()[0]?.label || '이름 없음'}`);
   const ctx = new AudioContext({ sampleRate: STT_SAMPLE_RATE });
+  dlog(`오디오 처리 생성: ${ctx.state}, ${ctx.sampleRate}Hz`);
   const stop = () => {
     media.getTracks().forEach((t) => t.stop());
     void ctx.close();
@@ -78,7 +82,7 @@ export async function startMicCapture(deviceId: string | null, onChunk: (pcm: Ar
       URL.revokeObjectURL(url);
     }
     const node = new AudioWorkletNode(ctx, 'pcm-capture');
-    node.port.onmessage = (ev: MessageEvent<ArrayBuffer>) => onChunk(ev.data);
+    node.port.onmessage = (ev: MessageEvent<ArrayBuffer>) => onChunk(ev.data); // 아래에서 진단용으로 감싼다
     // 그래프 끝(destination)에 이어져 있어야 처리가 돈다. 소리는 내지 않는다.
     const mute = ctx.createGain();
     mute.gain.value = 0;
@@ -89,9 +93,17 @@ export async function startMicCapture(deviceId: string | null, onChunk: (pcm: Ar
       await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 1500))]);
       if (ctx.state === 'suspended') document.addEventListener('pointerdown', () => void ctx.resume(), { once: true });
     }
+    dlog(`오디오 처리 상태: ${ctx.state}`);
   } catch (e) {
+    dlog(`오디오 처리 실패: ${(e as Error)?.name} ${(e as Error)?.message}`);
     stop();
     throw e;
   }
+  let chunks = 0;
+  const first = onChunk;
+  onChunk = (pcm) => {
+    if (++chunks === 1) dlog('첫 소리 조각 받음');
+    first(pcm);
+  };
   return { stop };
 }
