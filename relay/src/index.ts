@@ -25,6 +25,7 @@ export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const path = new URL(req.url).pathname;
     if (path === '/download' || path === '/download/') return serveDownload(req, env, ctx);
+    if (path === '/download/android' || path === '/download/android/') return serveApk(req, env);
     const m = RID.exec(path);
     if (!m) return env.ASSETS.fetch(req);
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('websocket only', { status: 426 });
@@ -74,6 +75,26 @@ async function serveDownload(req: Request, env: Env, ctx: ExecutionContext): Pro
     })().catch((e) => writable.abort(e)),
   );
   return new Response(readable, { headers });
+}
+
+/** 안드로이드 송출 앱 (android/, 빌드 결과는 /app/caption-host.apk) */
+async function serveApk(req: Request, env: Env): Promise<Response> {
+  const res = await env.ASSETS.fetch(new URL('/app/caption-host.apk', req.url));
+  // 없으면 화면(index.html)이 대신 오므로 형식으로 구분
+  if (!res.ok || !res.body || res.headers.get('content-type')?.includes('text/html')) {
+    return new Response('안드로이드 앱을 준비하는 중입니다. 잠시 후 다시 시도해 주세요.', {
+      status: 404,
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+    });
+  }
+  const headers = new Headers({
+    'content-type': 'application/vnd.android.package-archive',
+    'content-disposition': 'attachment; filename="caption-host.apk"',
+    'cache-control': 'no-cache',
+  });
+  const length = res.headers.get('content-length');
+  if (length) headers.set('content-length', length);
+  return new Response(req.method === 'HEAD' ? null : res.body, { headers });
 }
 
 export class RelayRoom extends DurableObject<Env> {

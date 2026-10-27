@@ -3,6 +3,7 @@
  * - LocalSttProvider: 노트북 안에서 도는 엔진 (기본, 음성이 외부로 나가지 않음)
  * - WebSpeechProvider: 크롬·사파리 내장(Google·Apple 서버) — 웹 송출용
  * - OnDeviceSttProvider: 폰·PC 브라우저 안에서 도는 엔진(WebAssembly) — 웹 송출용, 음성이 기기 밖으로 나가지 않음
+ * - NativeSttProvider: 안드로이드 앱 안에서 도는 엔진 — 같은 모델을 폰 CPU 여러 코어로, 음성이 기기 밖으로 나가지 않음
  */
 export interface SttProvider {
   readonly isSupported: boolean;

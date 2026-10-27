@@ -15,3 +15,5 @@
   Cache-Control: no-store
 /stt-web/worker.js
   Cache-Control: no-cache
+/app/*
+  Cache-Control: no-cache

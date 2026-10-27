@@ -1,4 +1,5 @@
 import type { CaptionLine } from '@caption/shared';
+import { nativeApp } from '../stt/NativeSttProvider';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -23,6 +24,10 @@ export function downloadCaptions(lines: readonly CaptionLine[], code: string): v
 
 /** 파일 그대로 저장 */
 export function saveBlob(filename: string, blob: Blob): void {
+  if (nativeApp) {
+    void saveInApp(filename, blob);
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -36,6 +41,10 @@ export function saveBlob(filename: string, blob: Blob): void {
 /** 텍스트는 BOM을 붙여 윈도우 메모장·엑셀에서도 한글이 깨지지 않게 한다 (JSON은 붙이지 않음) */
 export function saveText(filename: string, text: string, mime: string): void {
   const blob = new Blob([mime === 'application/json' ? '' : '\ufeff', text], { type: `${mime};charset=utf-8` });
+  if (nativeApp) {
+    void saveInApp(filename, blob);
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -44,4 +53,12 @@ export function saveText(filename: string, text: string, mime: string): void {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** 안드로이드 앱 안에서는 브라우저식 내려받기가 동작하지 않아 앱이 다운로드 폴더에 저장한다 */
+async function saveInApp(filename: string, blob: Blob): Promise<void> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  nativeApp!.saveFile(filename, blob.type.split(';')[0] || 'application/octet-stream', btoa(bin));
 }

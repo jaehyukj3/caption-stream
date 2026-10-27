@@ -6,6 +6,7 @@ import WebHostConsole from '../components/host/WebHostConsole.vue';
 import { usePreferences } from '../composables/usePreferences';
 import { useUpdateCheck } from '../composables/useUpdateCheck';
 import { createSttProvider, sttKindFromUrl } from '../stt';
+import { nativeApp } from '../stt/NativeSttProvider';
 import { readJson, writeJson } from '../utils/storage';
 
 /** 탭을 새로고침해도 같은 방을 이어서 송출할 수 있도록 탭 단위로 보관 */
@@ -27,8 +28,11 @@ const webSession = ref(0);
 const sttKind = sttKindFromUrl();
 /** 웹 송출 음성인식: 브라우저 내장(구글·애플) 또는 이 기기 안(모델을 받아 직접 인식) */
 const WEB_ENGINE_KEY = 'caption.webEngine';
-const webEngine = ref<'webspeech' | 'ondevice'>(readJson(localStorage, WEB_ENGINE_KEY, 'webspeech'));
-watch(webEngine, (v) => writeJson(localStorage, WEB_ENGINE_KEY, v));
+const webEngine = ref<'webspeech' | 'ondevice' | 'native'>(nativeApp ? 'native' : readJson(localStorage, WEB_ENGINE_KEY, 'webspeech'));
+// 안드로이드 앱 안에서는 항상 앱 인식 (브라우저 방식 선택은 브라우저에서만 기억)
+watch(webEngine, (v) => !nativeApp && writeJson(localStorage, WEB_ENGINE_KEY, v));
+/** 안드로이드 브라우저로 연 경우 앱 받기 안내 */
+const offerApp = !nativeApp && /Android/i.test(navigator.userAgent);
 const sttSupported = computed(() => createSttProvider(mode.value === 'web' ? webEngine.value : sttKind).isSupported);
 const secure = window.isSecureContext;
 /** 로컬 음성인식은 이 노트북에서 localhost로 연 화면에서만 동작한다 */
@@ -127,7 +131,11 @@ function onInvalid() {
       <div class="card start-card">
         <h1>웹 송출</h1>
         <p class="muted">프로그램 설치 없이 이 브라우저(PC·휴대폰)에서 송출합니다. 참석자는 QR을 찍어 자막을 봅니다.</p>
-        <fieldset class="engines">
+        <p v-if="nativeApp" class="notice">
+          <b>폰 안 인식</b> — 음성은 이 휴대폰 안에서 글자로 바뀌고 밖으로 나가지 않습니다.
+          처음 한 번 모델 약 240MB를 받습니다(와이파이 권장).
+        </p>
+        <fieldset v-else class="engines">
           <legend>음성인식 방식</legend>
           <label class="engine" :class="{ on: webEngine === 'webspeech' }">
             <input v-model="webEngine" type="radio" value="webspeech" />
@@ -144,10 +152,12 @@ function onInvalid() {
             </span>
           </label>
         </fieldset>
-        <p class="notice">이 화면을 닫거나 휴대폰 화면이 꺼지면 자막이 멈춥니다.</p>
+        <p v-if="nativeApp" class="notice">앱을 닫으면 자막이 멈춥니다. 송출하는 동안 화면은 켜진 채로 유지됩니다.</p>
+        <p v-else class="notice">이 화면을 닫거나 휴대폰 화면이 꺼지면 자막이 멈춥니다.</p>
         <p v-if="!sttSupported" class="notice is-error">이 브라우저는 이 음성인식 방식을 지원하지 않습니다. 안드로이드·PC는 크롬, 아이폰은 사파리를 사용해 주세요.</p>
         <button type="button" class="btn btn-primary big" :disabled="!sttSupported" @click="createSession">세션 만들기</button>
-        <a class="download" href="/download">기관용 노트북 프로그램 받기 (Windows · 약 200MB) — 음성이 외부로 나가지 않습니다</a>
+        <a v-if="offerApp" class="download" href="/download/android">안드로이드 앱 받기 — 폰 안에서 더 빠르고 정확하게 인식합니다 (음성 외부 전송 없음)</a>
+        <a v-if="!nativeApp" class="download" href="/download">기관용 노트북 프로그램 받기 (Windows · 약 200MB) — 음성이 외부로 나가지 않습니다</a>
       </div>
     </main>
 

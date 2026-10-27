@@ -45,7 +45,11 @@ try {
     writeFileSync(join(outDir, name), chunk);
     parts.push({ name, size: chunk.length });
   }
-  writeFileSync(join(outDir, 'manifest.json'), JSON.stringify({ version: VERSION, size: data.length, parts }, null, 2));
+  // 묶음 안 파일 위치 (안드로이드 앱이 조각을 받아 모델 파일로 바로 나눠 쓴다)
+  const loader = readFileSync(join(src, 'sherpa-onnx-wasm-main-vad-asr.js'), 'utf8');
+  const files = [...loader.matchAll(/\{"filename":"\/([^"]+)","start":(\d+),"end":(\d+)\}/g)].map((m) => ({ name: m[1], start: +m[2], end: +m[3] }));
+  if (!files.length || files.at(-1).end !== data.length) throw new Error('모델 묶음 안 파일 위치를 찾지 못했습니다');
+  writeFileSync(join(outDir, 'manifest.json'), JSON.stringify({ version: VERSION, size: data.length, parts, files }, null, 2));
   writeFileSync(
     join(outDir, 'NOTICE.txt'),
     [

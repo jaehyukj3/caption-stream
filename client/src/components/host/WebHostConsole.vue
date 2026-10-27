@@ -15,6 +15,7 @@ import { createSttProvider } from '../../stt';
 import { micErrorMessage, pcmToWav } from '../../stt/micCapture';
 import { debugLines, dlog } from '../../utils/debugLog';
 import { OnDeviceSttProvider, type ModelPhase } from '../../stt/OnDeviceSttProvider';
+import { NativeSttProvider } from '../../stt/NativeSttProvider';
 import { downloadCaptions, saveBlob, stamp } from '../../utils/download';
 import CaptionView from '../caption/CaptionView.vue';
 import DictionaryEditor from './DictionaryEditor.vue';
@@ -46,7 +47,9 @@ async function refreshMicPermission() {
 }
 void refreshMicPermission();
 const env = `${navigator.userAgent.match(/Android [\d.]+|iPhone OS [\d_]+|Windows NT [\d.]+|Mac OS X [\d_]+/)?.[0] ?? ''} · Chrome ${navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] ?? '?'} · 메모리 ${(navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? '?'}GB · 보안연결 ${window.isSecureContext ? '예' : '아니오'}`;
-const props = withDefaults(defineProps<{ engine?: 'webspeech' | 'ondevice' }>(), { engine: 'webspeech' });
+const props = withDefaults(defineProps<{ engine?: 'webspeech' | 'ondevice' | 'native' }>(), { engine: 'webspeech' });
+/** 모델을 받아 이 기기 안에서 인식하는 방식 (브라우저 WebAssembly 또는 안드로이드 앱) */
+const onDevice = props.engine !== 'webspeech';
 const emit = defineEmits<{ newSession: [] }>();
 
 const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(6, '0');
@@ -78,13 +81,13 @@ const sttMessage = ref('');
 const stt = createSttProvider(props.engine);
 const micState = ref<MicState>('idle');
 
-// 기기 안 인식: 화면을 열자마자 모델을 받아 두어(처음 한 번) 마이크 시작을 기다리지 않게 한다
-const modelState = ref<'idle' | 'loading' | 'ready' | 'error'>(props.engine === 'ondevice' ? 'loading' : 'idle');
+// 기기 안·앱 인식: 화면을 열자마자 모델을 받아 두어(처음 한 번) 마이크 시작을 기다리지 않게 한다
+const modelState = ref<'idle' | 'loading' | 'ready' | 'error'>(onDevice ? 'loading' : 'idle');
 const modelProgress = ref(0);
 const modelPhase = ref<ModelPhase>('download');
 function prepareModel() {
   modelState.value = 'loading';
-  OnDeviceSttProvider.prepare((phase, fraction) => {
+  (props.engine === 'native' ? NativeSttProvider : OnDeviceSttProvider).prepare((phase, fraction) => {
     modelPhase.value = phase;
     modelProgress.value = fraction;
   }).then(
@@ -95,10 +98,10 @@ function prepareModel() {
     },
   );
 }
-if (props.engine === 'ondevice') prepareModel();
+if (onDevice) prepareModel();
 
 // 테스트 기록: 이 탭이 곧 방이라 통계를 바로 읽는다
-const sessionLog = useSessionLog({ code, mode: 'web', engine: props.engine === 'ondevice' ? 'sensevoice-wasm' : 'webspeech' });
+const sessionLog = useSessionLog({ code, mode: 'web', engine: { webspeech: 'webspeech', ondevice: 'sensevoice-wasm', native: 'sensevoice-android' }[props.engine] });
 stt.onDiag?.(sessionLog.stt);
 watch(micState, (s) => sessionLog.mic(s));
 const stats = ref<RoomStats>(room.getStats());
@@ -144,7 +147,7 @@ async function start() {
   }, 8000);
   try {
     await stt.start();
-    modelState.value = props.engine === 'ondevice' ? 'ready' : 'idle';
+    modelState.value = onDevice ? 'ready' : 'idle';
     micState.value = 'running';
     if (sttMessage.value.startsWith('마이크를 켜는 중')) sttMessage.value = '';
   } catch (e) {
@@ -224,7 +227,11 @@ onBeforeUnmount(() => {
     </main>
 
     <aside class="side">
-      <p v-if="engine === 'ondevice'" class="notice web-note">
+      <p v-if="engine === 'native'" class="notice web-note">
+        <b>앱 송출 · 폰 안 인식</b> — 음성은 이 휴대폰 안에서 글자로 바뀌고 밖으로 나가지 않습니다.
+        앱을 닫으면 자막이 끝납니다.
+      </p>
+      <p v-else-if="engine === 'ondevice'" class="notice web-note">
         <b>웹 송출 · 기기 안 인식</b> — 음성은 이 기기 안에서 글자로 바뀌고 밖으로 나가지 않습니다.
         이 화면을 닫거나 새로고침하면 자막이 끝납니다.
       </p>
