@@ -1,5 +1,5 @@
 import { dlog } from '../utils/debugLog';
-import { startMicCapture, type MicCapture } from './micCapture';
+import { isMobileDevice, startMicCapture, type MicCapture } from './micCapture';
 import type { SttDiag, SttError, SttProvider } from './SttProvider';
 
 type WorkerOut =
@@ -149,7 +149,9 @@ export class OnDeviceSttProvider implements SttProvider {
     // 모델이 준비되기 전의 소리는 버린다.
     let engineReady = false;
     try {
-      this.capture = await startMicCapture(this.deviceId, (pcm) => engineReady && worker?.postMessage({ op: 'audio', pcm }, [pcm]));
+      this.capture = await startMicCapture(this.deviceId, (pcm) => engineReady && worker?.postMessage({ op: 'audio', pcm }, [pcm]), {
+        mobile: isMobileDevice(),
+      });
     } catch (e) {
       this.running = false;
       throw e;

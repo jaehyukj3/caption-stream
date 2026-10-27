@@ -11,15 +11,30 @@ import { dlog } from '../utils/debugLog';
  */
 const WORKLET_SOURCE = `
 const CHUNK = ${STT_SAMPLE_RATE / 10};
-const TARGET = 0.08, FLOOR = 0.004, MIN_GAIN = 0.5, MAX_GAIN = 8;
+const TARGET = 0.08, MIN_GAIN = 0.5;
+/** 3초마다 입력 크기·증폭 배율을 알린다 (진단용) */
+const STATS_EVERY = ${STT_SAMPLE_RATE * 3};
 class PcmCapture extends AudioWorkletProcessor {
-  constructor() { super(); this.buf = new Int16Array(CHUNK); this.n = 0; this.env = TARGET; this.gain = 1; }
+  constructor(options) {
+    super();
+    const o = (options && options.processorOptions) || {};
+    // floor: 이보다 작은 소리는 말소리로 보지 않음 · maxGain: 최대 증폭 배율
+    this.floor = o.floor || 0.004; this.maxGain = o.maxGain || 8;
+    this.buf = new Int16Array(CHUNK); this.n = 0; this.env = TARGET; this.gain = 1;
+    this.sSum = 0; this.sPeak = 0; this.sN = 0;
+  }
   process(inputs) {
     const ch = inputs[0] && inputs[0][0];
     if (ch) {
       let sum = 0;
       for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
       const rms = Math.sqrt(sum / ch.length);
+      this.sSum += sum; this.sN += ch.length; if (rms > this.sPeak) this.sPeak = rms;
+      if (this.sN >= STATS_EVERY) {
+        this.port.postMessage({ stats: true, rms: Math.sqrt(this.sSum / this.sN), peak: this.sPeak, gain: this.gain });
+        this.sSum = 0; this.sPeak = 0; this.sN = 0;
+      }
+      const FLOOR = this.floor, MAX_GAIN = this.maxGain;
       if (rms > FLOOR) this.env = this.env * 0.995 + rms * 0.005;
       const want = Math.min(MAX_GAIN, Math.max(MIN_GAIN, TARGET / this.env));
       this.gain += (want - this.gain) * 0.01;
@@ -54,17 +69,36 @@ export interface MicCapture {
   stop(): void;
 }
 
+export interface MicCaptureOptions {
+  /**
+   * 휴대폰용 설정. 안드로이드는 브라우저 자동 음량을 끄면 마이크 원음이 매우 작아(말소리가 잡음 수준)
+   * 음성 구간 검출이 거의 안 된다. 휴대폰에서는 자동 음량을 켜고, 더 작은 소리도 더 크게 키운다.
+   */
+  mobile?: boolean;
+}
+
+/** 휴대폰·태블릿 브라우저인지 (마이크 처리 설정을 다르게 한다) */
+export function isMobileDevice(): boolean {
+  return /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+}
+
+const dbfs = (x: number) => (x > 0 ? Math.round(20 * Math.log10(x)) : -120);
+
 /** 마이크를 켜고 16kHz Int16 PCM을 100ms마다 onChunk로 넘긴다 */
-export async function startMicCapture(deviceId: string | null, onChunk: (pcm: ArrayBuffer) => void): Promise<MicCapture> {
-  // 브라우저 잡음 제거·자동 음량은 인식률을 떨어뜨려 끈다 (실측: 끝음절 누락, 오인식 증가)
-  dlog('마이크 요청 (getUserMedia)');
+export async function startMicCapture(
+  deviceId: string | null,
+  onChunk: (pcm: ArrayBuffer) => void,
+  options: MicCaptureOptions = {},
+): Promise<MicCapture> {
+  // 노트북: 브라우저 잡음 제거·자동 음량은 인식률을 떨어뜨려 끈다 (실측: 끝음절 누락, 오인식 증가)
+  dlog(`마이크 요청 (getUserMedia, ${options.mobile ? '휴대폰 설정' : '노트북 설정'})`);
   const media = await navigator.mediaDevices.getUserMedia({
     audio: {
       deviceId: deviceId ? { exact: deviceId } : undefined,
       channelCount: 1,
       echoCancellation: false,
       noiseSuppression: false,
-      autoGainControl: false,
+      autoGainControl: !!options.mobile,
     },
   });
   dlog(`마이크 열림: ${media.getAudioTracks()[0]?.label || '이름 없음'}`);
@@ -81,8 +115,14 @@ export async function startMicCapture(deviceId: string | null, onChunk: (pcm: Ar
     } finally {
       URL.revokeObjectURL(url);
     }
-    const node = new AudioWorkletNode(ctx, 'pcm-capture');
-    node.port.onmessage = (ev: MessageEvent<ArrayBuffer>) => onChunk(ev.data); // 아래에서 진단용으로 감싼다
+    const node = new AudioWorkletNode(ctx, 'pcm-capture', {
+      processorOptions: options.mobile ? { floor: 0.0005, maxGain: 32 } : {},
+    });
+    node.port.onmessage = (ev: MessageEvent<ArrayBuffer | { stats: true; rms: number; peak: number; gain: number }>) => {
+      const d = ev.data;
+      if (d instanceof ArrayBuffer) onChunk(d); // 아래에서 진단용으로 감싼다
+      else dlog(`입력 크기: 평균 ${dbfs(d.rms)}dB, 최대 ${dbfs(d.peak)}dB, 증폭 x${d.gain.toFixed(1)}`);
+    };
     // 그래프 끝(destination)에 이어져 있어야 처리가 돈다. 소리는 내지 않는다.
     const mute = ctx.createGain();
     mute.gain.value = 0;
