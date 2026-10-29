@@ -76,7 +76,7 @@ try {
     sileroVad: {
       model: join(modelDir, 'silero_vad.onnx'),
       threshold: 0.5,
-      minSilenceDuration: 0.5, // 0.5초 쉬면 문장 확정
+      minSilenceDuration: 0.4, // 0.4초 쉬면 문장 확정 (0.5와 정확도 같고 0.1초 빠름)
       minSpeechDuration: 0.25,
       maxSpeechDuration: 12, // 쉬지 않고 말해도 12초마다 끊어서 확정
       windowSize: VAD_WINDOW,

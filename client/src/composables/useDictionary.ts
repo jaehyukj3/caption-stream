@@ -1,4 +1,5 @@
 import { computed, ref, watch } from 'vue';
+import { tidySpacing } from '../stt/tidyText';
 import { readJson, writeJson } from '../utils/storage';
 
 export interface DictEntry {
@@ -33,7 +34,9 @@ export function useDictionary() {
     return { re: new RegExp(pattern, 'g'), map };
   });
 
-  function apply(text: string): string {
+  /** 띄어쓰기를 다듬은 뒤 사전 바꾸기를 적용한다 */
+  function apply(raw: string): string {
+    const text = tidySpacing(raw);
     const c = compiled.value;
     if (!c) return text;
     return text.replace(c.re, (m) => c.map.get(squash(m)) ?? m);

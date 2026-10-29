@@ -20,7 +20,7 @@ type NativeEvent =
   | { op: 'error'; where?: 'prepare'; message: string }
   | { op: 'listening' }
   | { op: 'micError'; message: string }
-  | { op: 'result'; kind: 'interim' | 'final'; text: string }
+  | { op: 'result'; kind: 'interim' | 'final' | 'revise'; text: string }
   | { op: 'flushed' }
   | { op: 'decode'; ms: number; audioMs: number }
   | { op: 'rx'; seconds: number; peak: number; speech: number; gain: number };
@@ -97,6 +97,7 @@ export class NativeSttProvider implements SttProvider {
   private finalCb: (t: string) => void = () => {};
   private errorCb: (e: SttError) => void = () => {};
   private diagCb: (e: SttDiag) => void = () => {};
+  private reviseCb: (t: string) => void = () => {};
 
   onInterim(cb: (text: string) => void) {
     this.interimCb = cb;
@@ -115,6 +116,10 @@ export class NativeSttProvider implements SttProvider {
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return new Int16Array(bytes.buffer);
+  }
+  /** 방금 확정한 문장을 다시 확인해 고친 결과 */
+  onRevise(cb: (text: string) => void) {
+    this.reviseCb = cb;
   }
   onDiag(cb: (e: SttDiag) => void) {
     this.diagCb = cb;
@@ -179,6 +184,9 @@ export class NativeSttProvider implements SttProvider {
         if (m.kind === 'interim') {
           this.lastInterim = m.text;
           this.interimCb(m.text);
+        } else if (m.kind === 'revise') {
+          dlog(`확정 고침: "${m.text}"`);
+          this.reviseCb(m.text);
         } else {
           dlog(`인식 결과: "${m.text}"`);
           this.lastInterim = '';

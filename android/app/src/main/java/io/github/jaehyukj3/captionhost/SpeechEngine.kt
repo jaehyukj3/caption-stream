@@ -64,7 +64,7 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
                     model = model.vad,
                     // 휴대폰 마이크 소리는 말 사이에도 잡음이 깔려 0.5에서는 짧은 조각만 잡힌다 (웹 기기 안 인식과 같은 값)
                     threshold = 0.35f,
-                    minSilenceDuration = 0.5f, // 0.5초 쉬면 문장 확정
+                    minSilenceDuration = 0.4f, // 0.4초 쉬면 문장 확정 (0.5와 정확도 같고 0.1초 빠름)
                     minSpeechDuration = 0.25f,
                     windowSize = VAD_WINDOW,
                     maxSpeechDuration = 12f, // 쉬지 않고 말해도 12초마다 끊어서 확정
@@ -265,7 +265,7 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             while (!vad.empty()) {
                 val seg = vad.front()
                 vad.pop()
-                emitFinal(decideFinal(seg.samples))
+                finalize(seg.samples)
                 resetSpeech()
             }
         }
@@ -284,25 +284,30 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             }
         }
 
-        fun emitFinal(raw: String) {
+        fun emitFinal(raw: String): String {
             val text = mergeFinal(lastInterim, raw)
             lastInterim = ""
             if (text.isNotEmpty()) emit(event("result").put("kind", "final").put("text", text))
+            return text
         }
 
         /**
-         * 확정 인식. 결과가 마지막 중간 결과와 다르면(맞게 보였다가 틀리게 바뀌는 경우) 소리를 조금 달리 넣어
-         * 두 번 더 인식하고, 최근 중간 결과들까지 넣어 서로 가장 비슷한 결과(다수결)를 고른다.
+         * 문장 확정. 바로 확정해 보내고(기다리지 않게), 결과가 마지막 중간 결과와 다르면(맞게 보였다가 틀리게 바뀌는 경우)
+         * 소리를 조금 달리 넣어 두 번 더 인식한 뒤 최근 중간 결과들까지 넣어 서로 가장 비슷한 결과(다수결)를 고른다.
+         * 그 결과가 처음 확정한 것과 다르면 방금 줄을 고친다(revise).
          * (잡음·잔향을 섞은 낭독 48문장: 글자 오류 6.9% → 6.4%)
          */
-        fun decideFinal(samples: FloatArray): String {
+        fun finalize(samples: FloatArray) {
             val first = transcribe(samples)
-            if (lastInterim.isEmpty() || normText(first) == normText(lastInterim)) return first
+            val interim = lastInterim
+            val sent = emitFinal(first)
+            if (interim.isEmpty() || normText(first) == normText(interim) || sent.isEmpty()) return
             val pad = FloatArray(SAMPLE_RATE * 6 / 10)
             val cands = arrayListOf(first, transcribe(concat(listOf(pad, samples, pad))))
             cands.addAll(interims.takeLast(2))
             if (speechLen > 0) cands.add(transcribe(concat(speech)))
-            return medoid(cands.filter { it.isNotEmpty() })
+            val better = mergeFinal(interim, medoid(cands.filter { it.isNotEmpty() }))
+            if (better.isNotEmpty() && better != sent) emit(event("result").put("kind", "revise").put("text", better))
         }
 
         fun resetSpeech() {

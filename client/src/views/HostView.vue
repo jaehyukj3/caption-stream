@@ -110,7 +110,11 @@ function onInvalid() {
         {{ prefs.theme === 'dark' ? '☀' : '☾' }}
       </button>
     </header>
-    <p v-if="update.outdated.value" class="notice is-error update" role="alert">
+    <p v-if="update.outdated.value && update.download.value" class="notice update" role="status">
+      노트북 프로그램 새 버전({{ update.latest.value }})이 있습니다. 받은 zip을 풀어 지금 폴더 대신 쓰세요.
+      <a class="btn btn-primary" :href="update.download.value" target="_blank" rel="noopener">새 버전 받기</a>
+    </p>
+    <p v-else-if="update.outdated.value" class="notice is-error update" role="alert">
       새 버전({{ update.latest.value }})이 있습니다. 지금 화면은 예전 버전입니다.
       <button type="button" class="btn btn-primary" @click="update.reload">새로고침</button>
     </p>

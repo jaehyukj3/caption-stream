@@ -98,7 +98,7 @@ function init() {
         // 노트북(0.5)보다 낮춘다: 휴대폰 마이크 소리는 말 사이에도 잡음이 깔려 0.5에서는 짧은 조각만 잡힌다
         // (실제 휴대폰 녹음: 0.5 → 2.5초 조각 둘 "まイク？", 0.35 → 4.6초 한 문장 "마이크 시작 말씀하시면…")
         threshold: 0.35,
-        minSilenceDuration: 0.5, // 0.5초 쉬면 문장 확정
+        minSilenceDuration: 0.4, // 0.4초 쉬면 문장 확정 (0.5와 정확도 같고 0.1초 빠름)
         minSpeechDuration: 0.25,
         maxSpeechDuration: 12, // 쉬지 않고 말해도 12초마다 끊어서 확정
         windowSize: VAD_WINDOW,
@@ -259,7 +259,7 @@ const session = {
     while (!vad.isEmpty()) {
       const seg = vad.front();
       vad.pop();
-      this.emitFinal(this.decideFinal(seg.samples));
+      this.finalize(seg.samples);
       this.resetSpeech();
     }
   },
@@ -280,23 +280,28 @@ const session = {
   },
 
   /**
-   * 확정 인식. 결과가 마지막 중간 결과와 다르면(맞게 보였다가 틀리게 바뀌는 경우) 소리를 조금 달리 넣어
-   * 두 번 더 인식하고, 최근 중간 결과들까지 넣어 서로 가장 비슷한 결과(다수결)를 고른다.
+   * 문장 확정. 바로 확정해 보내고(기다리지 않게), 결과가 마지막 중간 결과와 다르면(맞게 보였다가 틀리게 바뀌는 경우)
+   * 소리를 조금 달리 넣어 두 번 더 인식한 뒤 최근 중간 결과들까지 넣어 서로 가장 비슷한 결과(다수결)를 고른다.
+   * 그 결과가 처음 확정한 것과 다르면 방금 줄을 고친다(revise).
    * (잡음·잔향을 섞은 낭독 48문장: 글자 오류 6.9% → 6.4%)
    */
-  decideFinal(samples) {
+  finalize(samples) {
     const first = transcribe(samples);
-    if (!this.lastInterim || normText(first) === normText(this.lastInterim)) return first;
+    const interim = this.lastInterim;
+    const sent = this.emitFinal(first);
+    if (!interim || !sent || normText(first) === normText(interim)) return;
     const pad = new Float32Array(SAMPLE_RATE * 0.6);
     const cands = [first, transcribe(concat([pad, samples, pad])), ...this.interims.slice(-2)];
     if (this.speechLen > 0) cands.push(transcribe(concat(this.speech)));
-    return medoid(cands.filter(Boolean));
+    const better = mergeFinal(interim, medoid(cands.filter(Boolean)));
+    if (better && better !== sent) post({ op: 'result', kind: 'revise', text: better });
   },
 
   emitFinal(raw) {
     const text = mergeFinal(this.lastInterim, raw);
     this.lastInterim = '';
     if (text) post({ op: 'result', kind: 'final', text });
+    return text;
   },
 
   resetSpeech() {

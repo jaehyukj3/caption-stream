@@ -8,7 +8,7 @@ type WorkerOut =
   | { op: 'rx'; chunks: number; seconds: number; peak: number; speech: number; ready: boolean }
   | { op: 'ready'; cached: boolean }
   | { op: 'error'; message: string }
-  | { op: 'result'; kind: 'interim' | 'final'; text: string }
+  | { op: 'result'; kind: 'interim' | 'final' | 'revise'; text: string }
   | { op: 'flushed' }
   | { op: 'decode'; ms: number; audioMs: number };
 
@@ -133,6 +133,7 @@ export class OnDeviceSttProvider implements SttProvider {
   private finalCb: (t: string) => void = () => {};
   private errorCb: (e: SttError) => void = () => {};
   private diagCb: (e: SttDiag) => void = () => {};
+  private reviseCb: (t: string) => void = () => {};
 
   onInterim(cb: (text: string) => void) {
     this.interimCb = cb;
@@ -142,6 +143,10 @@ export class OnDeviceSttProvider implements SttProvider {
   }
   onError(cb: (err: SttError) => void) {
     this.errorCb = cb;
+  }
+  /** 방금 확정한 문장을 다시 확인해 고친 결과 */
+  onRevise(cb: (text: string) => void) {
+    this.reviseCb = cb;
   }
   onDiag(cb: (e: SttDiag) => void) {
     this.diagCb = cb;
@@ -216,6 +221,9 @@ export class OnDeviceSttProvider implements SttProvider {
         if (m.kind === 'interim') {
           this.lastInterim = m.text;
           this.interimCb(m.text);
+        } else if (m.kind === 'revise') {
+          dlog(`확정 고침: "${m.text}"`);
+          this.reviseCb(m.text);
         } else {
           this.lastInterim = '';
           this.finalCb(m.text);

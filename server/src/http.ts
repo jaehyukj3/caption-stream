@@ -9,6 +9,7 @@ import {
   type RoomStatusResponse,
   type SttStatusResponse,
 } from '@caption/shared';
+import { config } from './config.js';
 import type { RoomManager } from './RoomManager.js';
 import { sttStatus } from './stt/SttEngine.js';
 
@@ -82,6 +83,18 @@ export function createHttpHandler(rooms: RoomManager, staticDir: string | null, 
     }
 
     if (path === '/api/health') return json(res, 200, { ok: true });
+
+    // 노트북 프로그램 새 버전 확인: 웹 송출 사이트에 올라간 최신 빌드 번호와 받기 주소
+    if (path === '/api/latest' && req.method === 'GET') {
+      if (!config.relayUrl) return json(res, 404, { error: 'NO_RELAY' });
+      fetch(`${config.relayUrl}/version.json`, { signal: AbortSignal.timeout(5000), headers: { 'cache-control': 'no-cache' } })
+        .then((r) => (r.ok ? (r.json() as Promise<{ build?: string }>) : Promise.reject(new Error(String(r.status)))))
+        .then(
+          (v) => json(res, 200, { build: v.build ?? null, download: `${config.relayUrl}/download` }),
+          () => json(res, 502, { error: 'UNREACHABLE' }),
+        );
+      return;
+    }
 
     if (path.startsWith('/api/')) return json(res, 404, { error: 'NOT_FOUND' });
 
