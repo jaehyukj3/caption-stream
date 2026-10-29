@@ -82,17 +82,26 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
     fun start(): String? {
         if (running) return null
         val vad = vad ?: return "음성인식 모델이 아직 준비되지 않았습니다."
-        val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val rec = try {
-            // 인식이 잠깐 밀려도 소리를 잃지 않도록 10초 분량 버퍼
-            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(minBuf, SAMPLE_RATE * 2 * 10))
-        } catch (e: Exception) {
-            return "마이크를 열지 못했습니다 (${e.message})"
+        // 마이크 본래 속도(48kHz 등)로 받아 직접 걸러서 16kHz로 줄인다 (Downsampler 설명 참고). 안 되면 16kHz로.
+        var opened: AudioRecord? = null
+        var rate = 0
+        for (r in intArrayOf(48000, 44100, SAMPLE_RATE)) {
+            val minBuf = AudioRecord.getMinBufferSize(r, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            if (minBuf <= 0) continue
+            val candidate = try {
+                // 인식이 잠깐 밀려도 소리를 잃지 않도록 10초 분량 버퍼
+                AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, r, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(minBuf, r * 2 * 10))
+            } catch (_: Exception) {
+                continue
+            }
+            if (candidate.state == AudioRecord.STATE_INITIALIZED) {
+                opened = candidate
+                rate = r
+                break
+            }
+            candidate.release()
         }
-        if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            rec.release()
-            return "마이크를 열지 못했습니다. 마이크 권한을 확인해 주세요."
-        }
+        val rec = opened ?: return "마이크를 열지 못했습니다. 마이크 권한을 확인해 주세요."
         rec.startRecording()
         if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
             rec.release()
@@ -101,7 +110,8 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
         record = rec
         session.reset(vad)
         running = true
-        thread = Thread({ loop(rec, vad) }, "speech").apply { start() }
+        emit(event("rate").put("message", "마이크 ${rate}Hz${if (rate == SAMPLE_RATE) "" else " → 16000Hz"}"))
+        thread = Thread({ loop(rec, rate, vad) }, "speech").apply { start() }
         return null
     }
 
@@ -119,8 +129,9 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
         vad?.let { session.flush(it) }
     }
 
-    private fun loop(rec: AudioRecord, vad: Vad) {
-        val pcm = ShortArray(SAMPLE_RATE / 10) // 100ms
+    private fun loop(rec: AudioRecord, rate: Int, vad: Vad) {
+        val pcm = ShortArray(rate / 10) // 100ms
+        val down = if (rate == SAMPLE_RATE) null else Downsampler(rate)
         val gain = AutoGain()
         var statSince = SystemClock.elapsedRealtime()
         var statSamples = 0
@@ -134,17 +145,19 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
                     break
                 }
                 if (n == 0) continue
-                val f = FloatArray(n)
+                val raw = FloatArray(n)
                 for (i in 0 until n) {
-                    f[i] = pcm[i] / 32768f
-                    val a = abs(f[i])
+                    raw[i] = pcm[i] / 32768f
+                    val a = abs(raw[i])
                     if (a > statPeak) statPeak = a
                 }
+                val f = down?.process(raw) ?: raw
+                if (f.isEmpty()) continue
                 gain.apply(f)
                 remember(f)
                 session.accept(f, vad)
-                statSamples += n
-                if (session.speaking) statSpeech += n
+                statSamples += f.size
+                if (session.speaking) statSpeech += f.size
                 val now = SystemClock.elapsedRealtime()
                 if (now - statSince >= 3000) {
                     emit(
