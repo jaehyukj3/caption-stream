@@ -136,23 +136,23 @@ function onInvalid() {
         <h1>웹 송출</h1>
         <p class="muted">프로그램 설치 없이 이 브라우저(PC·휴대폰)에서 송출합니다. 참석자는 QR을 찍어 자막을 봅니다.</p>
         <p v-if="nativeApp" class="notice">
-          <b>폰 안 인식</b> — 음성은 이 휴대폰 안에서 글자로 바뀌고 밖으로 나가지 않습니다.
+          <b>폰 안 인식</b> — 말소리가 이 휴대폰 안에서만 글자로 바뀌고 밖으로 나가지 않습니다.
           처음 한 번 모델 약 240MB를 받습니다(와이파이 권장).
         </p>
         <fieldset v-else class="engines">
-          <legend>음성인식 방식</legend>
+          <legend>말소리를 어디서 글자로 바꿀까요?</legend>
           <label class="engine" :class="{ on: webEngine === 'webspeech' }">
             <input v-model="webEngine" type="radio" value="webspeech" />
             <span>
-              <b>브라우저 음성인식</b>
-              <small>바로 시작. 음성이 구글·애플 서버로 전송됩니다.</small>
+              <b>브라우저 음성인식 — 정확도 우선</b>
+              <small>말소리를 인터넷으로 구글(아이폰은 애플)에 보내 글자로 바꿉니다. 가장 정확하고 바로 시작됩니다. 공개 강의에 알맞습니다.</small>
             </span>
           </label>
           <label class="engine" :class="{ on: webEngine === 'ondevice' }">
             <input v-model="webEngine" type="radio" value="ondevice" />
             <span>
-              <b>이 기기 안에서 인식 (베타)</b>
-              <small>음성이 기기 밖으로 나가지 않습니다. 처음 한 번 모델 약 240MB를 받습니다(와이파이 권장). 안드로이드 크롬 권장.</small>
+              <b>이 기기 안에서 인식 — 보안 우선 (베타)</b>
+              <small>말소리가 이 기기 밖으로 나가지 않습니다. 내부 교육·비공개 내용에 알맞습니다. 정확도는 조금 낮고, 처음 한 번 약 240MB를 받습니다(와이파이 권장). 안드로이드 크롬 권장.</small>
             </span>
           </label>
         </fieldset>
@@ -160,8 +160,8 @@ function onInvalid() {
         <p v-else class="notice">이 화면을 닫거나 휴대폰 화면이 꺼지면 자막이 멈춥니다.</p>
         <p v-if="!sttSupported" class="notice is-error">이 브라우저는 이 음성인식 방식을 지원하지 않습니다. 안드로이드·PC는 크롬, 아이폰은 사파리를 사용해 주세요.</p>
         <button type="button" class="btn btn-primary big" :disabled="!sttSupported" @click="createSession">세션 만들기</button>
-        <a v-if="offerApp" class="download" href="/download/android">안드로이드 앱 받기 — 폰 안에서 더 빠르고 정확하게 인식합니다 (음성 외부 전송 없음)</a>
-        <a v-if="!nativeApp" class="download" href="/download">기관용 노트북 프로그램 받기 (Windows · 약 200MB) — 음성이 외부로 나가지 않습니다</a>
+        <a v-if="offerApp" class="download" href="/download/android">안드로이드 앱 받기 — 말소리를 밖으로 보내지 않고 폰 안에서 더 빠르게 인식합니다</a>
+        <a v-if="!nativeApp" class="download" href="/download">기관용 노트북 프로그램 받기 (Windows · 약 200MB) — 말소리를 밖으로 보내지 않습니다</a>
       </div>
     </main>
 
