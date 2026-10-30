@@ -141,18 +141,21 @@ function onInvalid() {
         </p>
         <fieldset v-else class="engines">
           <legend>음성인식 방식</legend>
+          <p class="engine-note">음성 데이터는 말하는 목소리를 뜻합니다. 자막 글자는 어느 방식이든 암호화되어 전달됩니다.</p>
           <label class="engine" :class="{ on: webEngine === 'webspeech' }">
             <input v-model="webEngine" type="radio" value="webspeech" />
             <span>
               <b>브라우저 음성인식</b>
-              <small>바로 시작. 음성이 구글·애플 서버로 전송됩니다.</small>
+              <small>자막: 구글·애플 서버가 만듦<br />음성 데이터: <b>외부로 나감</b></small>
+              <small>공개 강의처럼 내용이 나가도 될 때. 가장 정확하고 바로 시작됩니다.</small>
             </span>
           </label>
           <label class="engine" :class="{ on: webEngine === 'ondevice' }">
             <input v-model="webEngine" type="radio" value="ondevice" />
             <span>
               <b>이 기기 안에서 인식 (베타)</b>
-              <small>음성이 기기 밖으로 나가지 않습니다. 처음 한 번 모델 약 240MB를 받습니다(와이파이 권장). 안드로이드 크롬 권장.</small>
+              <small>자막: 이 기기의 로컬 모델이 만듦<br />음성 데이터: <b>외부로 안 나감</b></small>
+              <small>내부 교육처럼 내용이 나가면 안 될 때. 정확도는 조금 낮고, 처음 한 번 약 240MB를 받습니다(와이파이 권장).</small>
             </span>
           </label>
         </fieldset>
@@ -274,6 +277,14 @@ function onInvalid() {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+.engine small b {
+  color: var(--text);
+}
+.engine-note {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
 }
 .download {
   margin-top: 4px;
