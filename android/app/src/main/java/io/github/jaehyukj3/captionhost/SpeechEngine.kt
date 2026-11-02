@@ -326,7 +326,7 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
 
     /**
      * 입력 음량 자동 맞춤 (웹 마이크 처리와 같은 방식): 말소리 구간 크기를 기준으로 천천히 맞추고,
-     * 조용할 때 잡음을 키우지 않도록 증폭은 최대 3배까지만.
+     * 증폭은 최대 8배(노트북과 같음). 3배로는 3~4m 떨어진 발표자 목소리를 말소리로 잡지 못해 문장이 통째로 빠졌다.
      */
     private class AutoGain {
         var gain = 1f
@@ -352,7 +352,7 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             const val TARGET = 0.08f
             const val FLOOR = 0.003f
             const val MIN_GAIN = 0.5f
-            const val MAX_GAIN = 3f
+            const val MAX_GAIN = 8f
             // 웹(48kHz, 128샘플마다 0.995 / 0.01)과 같은 빠르기를 10ms 단위로 환산
             val ENV_KEEP = 0.995f.pow(10f / 2.667f)
             val GAIN_STEP = 1 - 0.99f.pow(10f / 2.667f)
