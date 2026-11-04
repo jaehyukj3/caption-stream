@@ -11,6 +11,10 @@ interface CaptionNativeApi {
   saveFile(name: string, mime: string, base64: string): void;
   /** 최근 10초 소리 (base64, 16kHz 16비트 PCM). 예전 앱에는 없다. */
   recentAudio?(): string;
+  /** 폰 내장 기기 안 음성인식 (안드로이드 12 이상). 예전 앱에는 없다. */
+  systemAvailable?(): boolean;
+  prepareSystem?(): void;
+  startSystem?(): void;
 }
 
 type NativeEvent =
@@ -37,7 +41,23 @@ export const nativeApp: CaptionNativeApi | null = typeof window !== 'undefined' 
 
 const FLUSH_TIMEOUT_MS = 8000;
 const listeners = new Set<(m: NativeEvent) => void>();
-let ready: Promise<void> | null = null;
+/** 앱 안 모델(model)과 폰 내장 인식(system)은 따로 준비한다 */
+const ready: Record<NativeMode, Promise<void> | null> = { model: null, system: null };
+
+/**
+ * model: 앱 안 모델(SenseVoice). 처음 한 번 약 240MB를 받는다.
+ * system: 폰에 들어 있는 기기 안 음성인식(갤럭시·구글). 더 정확하고 받을 것이 없다.
+ */
+export type NativeMode = 'model' | 'system';
+
+/** 이 앱(폰)에서 폰 내장 기기 안 음성인식을 쓸 수 있는지 */
+export const nativeSystemAvailable = (): boolean => {
+  try {
+    return !!nativeApp?.systemAvailable?.();
+  } catch {
+    return false;
+  }
+};
 
 if (nativeApp) {
   let lastPct = -1;
@@ -54,28 +74,35 @@ if (nativeApp) {
 }
 
 /**
- * 안드로이드 앱 안 음성인식. 웹 '기기 안 인식'과 같은 모델(SenseVoice)을 앱이 폰 CPU 여러 코어로 돌리고,
- * 마이크도 안드로이드 음성인식용 입력으로 받는다. 음성은 폰 밖으로 나가지 않는다.
+ * 안드로이드 앱 안 음성인식. 음성은 폰 밖으로 나가지 않는다.
+ *  - model: 웹 '기기 안 인식'과 같은 모델(SenseVoice)을 앱이 폰 CPU 여러 코어로 돌린다.
+ *  - system: 폰에 들어 있는 기기 안 음성인식을 빌려 쓴다 (안드로이드 12 이상, '기기 안에서만 처리' 지정).
  */
 export class NativeSttProvider implements SttProvider {
-  readonly isSupported = !!nativeApp;
+  readonly isSupported: boolean;
 
-  /** 모델 받기·준비 (처음 한 번 약 240MB). 진행률은 onProgress로. */
-  static prepare(onProgress?: (phase: ModelPhase, fraction: number) => void): Promise<void> {
-    if (!ready) {
-      ready = new Promise<void>((resolve, reject) => {
+  constructor(private readonly mode: NativeMode = 'model') {
+    this.isSupported = mode === 'system' ? nativeSystemAvailable() : !!nativeApp;
+  }
+
+  /** 준비: model은 모델 받기(처음 한 번 약 240MB, 진행률은 onProgress), system은 한국어 언어팩 확인. */
+  static prepare(onProgress?: (phase: ModelPhase, fraction: number) => void, mode: NativeMode = 'model'): Promise<void> {
+    let p = ready[mode];
+    if (!p) {
+      p = ready[mode] = new Promise<void>((resolve, reject) => {
         const l = (m: NativeEvent) => {
           if (m.op === 'ready') {
             listeners.delete(l);
             resolve();
           } else if (m.op === 'error' && m.where === 'prepare') {
             listeners.delete(l);
-            ready = null;
+            ready[mode] = null;
             reject(new Error(m.message));
           }
         };
         listeners.add(l);
-        nativeApp!.prepare();
+        if (mode === 'system') nativeApp!.prepareSystem!();
+        else nativeApp!.prepare();
       });
     }
     if (onProgress) {
@@ -85,9 +112,9 @@ export class NativeSttProvider implements SttProvider {
       };
       listeners.add(l);
       const off = () => listeners.delete(l);
-      ready.then(off, off);
+      p.then(off, off);
     }
-    return ready;
+    return p;
   }
 
   private running = false;
@@ -110,6 +137,7 @@ export class NativeSttProvider implements SttProvider {
   }
   /** 최근 10초 동안 앱이 인식에 넣은 소리 (진단용) */
   recentAudio(): Int16Array | null {
+    if (this.mode === 'system') return null; // 폰 내장 인식은 소리를 앱에 넘겨주지 않는다
     const b64 = nativeApp?.recentAudio?.();
     if (!b64) return null;
     const bin = atob(b64);
@@ -128,9 +156,9 @@ export class NativeSttProvider implements SttProvider {
   async start(): Promise<void> {
     if (this.running) return;
     try {
-      await NativeSttProvider.prepare();
+      await NativeSttProvider.prepare(undefined, this.mode);
     } catch (e) {
-      const message = `음성인식 모델을 준비하지 못했습니다: ${(e as Error).message}`;
+      const message = this.mode === 'system' ? (e as Error).message : `음성인식 모델을 준비하지 못했습니다: ${(e as Error).message}`;
       this.errorCb({ fatal: true, code: 'model', message });
       throw new Error(message);
     }
@@ -147,7 +175,8 @@ export class NativeSttProvider implements SttProvider {
         }
       };
       listeners.add(l);
-      nativeApp!.start();
+      if (this.mode === 'system') nativeApp!.startSystem!();
+      else nativeApp!.start();
     });
     this.running = true;
     listeners.add(this.listener);

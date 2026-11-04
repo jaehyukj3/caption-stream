@@ -47,9 +47,11 @@ async function refreshMicPermission() {
 }
 void refreshMicPermission();
 const env = `${navigator.userAgent.match(/Android [\d.]+|iPhone OS [\d_]+|Windows NT [\d.]+|Mac OS X [\d_]+/)?.[0] ?? ''} · Chrome ${navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] ?? '?'} · 메모리 ${(navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? '?'}GB · 보안연결 ${window.isSecureContext ? '예' : '아니오'}`;
-const props = withDefaults(defineProps<{ engine?: 'webspeech' | 'ondevice' | 'native' }>(), { engine: 'webspeech' });
+const props = withDefaults(defineProps<{ engine?: 'webspeech' | 'ondevice' | 'native' | 'nativeSystem' }>(), { engine: 'webspeech' });
 /** 모델을 받아 이 기기 안에서 인식하는 방식 (브라우저 WebAssembly 또는 안드로이드 앱) */
 const onDevice = props.engine !== 'webspeech';
+/** 받아 두는 음성인식 모델(SenseVoice)을 쓰는 방식 (폰 내장 인식은 받을 모델이 없다) */
+const usesModel = props.engine === 'ondevice' || props.engine === 'native';
 const emit = defineEmits<{ newSession: [] }>();
 
 const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(6, '0');
@@ -87,21 +89,28 @@ const modelProgress = ref(0);
 const modelPhase = ref<ModelPhase>('download');
 function prepareModel() {
   modelState.value = 'loading';
-  (props.engine === 'native' ? NativeSttProvider : OnDeviceSttProvider).prepare((phase, fraction) => {
+  const onProgress = (phase: ModelPhase, fraction: number) => {
     modelPhase.value = phase;
     modelProgress.value = fraction;
-  }).then(
+  };
+  const prepared =
+    props.engine === 'nativeSystem'
+      ? NativeSttProvider.prepare(undefined, 'system')
+      : (props.engine === 'native' ? NativeSttProvider : OnDeviceSttProvider).prepare(onProgress);
+  prepared.then(
     () => (modelState.value = 'ready'),
     (e: Error) => {
       modelState.value = 'error';
-      sttMessage.value = `음성인식 모델을 준비하지 못했습니다: ${e.message} (‘마이크 시작’을 누르면 다시 시도합니다)`;
+      sttMessage.value = usesModel
+        ? `음성인식 모델을 준비하지 못했습니다: ${e.message} (‘마이크 시작’을 누르면 다시 시도합니다)`
+        : `${e.message} (‘마이크 시작’을 누르면 다시 확인합니다)`;
     },
   );
 }
 if (onDevice) prepareModel();
 
 // 테스트 기록: 이 탭이 곧 방이라 통계를 바로 읽는다
-const sessionLog = useSessionLog({ code, mode: 'web', engine: { webspeech: 'webspeech', ondevice: 'sensevoice-wasm', native: 'sensevoice-android' }[props.engine] });
+const sessionLog = useSessionLog({ code, mode: 'web', engine: { webspeech: 'webspeech', ondevice: 'sensevoice-wasm', native: 'sensevoice-android', nativeSystem: 'android-system' }[props.engine] });
 stt.onDiag?.(sessionLog.stt);
 watch(micState, (s) => sessionLog.mic(s));
 const stats = ref<RoomStats>(room.getStats());
@@ -227,7 +236,11 @@ onBeforeUnmount(() => {
     </main>
 
     <aside class="side">
-      <p v-if="engine === 'native'" class="notice web-note">
+      <p v-if="engine === 'nativeSystem'" class="notice web-note">
+        <b>앱 송출 · 폰 내장 음성인식</b> — 이 폰에 들어 있는 음성인식이 폰 안에서만 글자로 바꾸며, 음성은 밖으로 나가지 않습니다.
+        앱을 닫으면 자막이 끝납니다.
+      </p>
+      <p v-else-if="engine === 'native'" class="notice web-note">
         <b>앱 송출 · 폰 안 인식</b> — 음성은 이 휴대폰 안에서 글자로 바뀌고 밖으로 나가지 않습니다.
         앱을 닫으면 자막이 끝납니다.
       </p>
@@ -240,11 +253,11 @@ onBeforeUnmount(() => {
         이 화면을 닫거나 새로고침하면 자막이 끝납니다. 음성이 밖으로 나가면 안 되는 강의는 노트북 프로그램(음성 외부 전송 없음)을 쓰세요.
       </p>
       <p class="build muted">버전 {{ build }}</p>
-      <p v-if="modelState === 'loading' && modelPhase === 'download'" class="notice model">
+      <p v-if="usesModel && modelState === 'loading' && modelPhase === 'download'" class="notice model">
         음성인식 모델 받는 중… {{ Math.round(modelProgress * 100) }}%
         <small>처음 한 번만 약 240MB를 받고, 다음부터는 이 기기에 보관된 것을 씁니다.</small>
       </p>
-      <p v-else-if="modelState === 'loading'" class="notice model">
+      <p v-else-if="usesModel && modelState === 'loading'" class="notice model">
         음성인식 모델 불러오는 중…
         <small>폰에서는 30초~1분쯤 걸릴 수 있습니다. 화면을 켜 둔 채 기다려 주세요.</small>
       </p>
@@ -262,7 +275,7 @@ onBeforeUnmount(() => {
       <div class="tools">
         <button type="button" class="btn" :disabled="!store.state.lines.length" @click="downloadCaptions(store.state.lines, code)">⤓ 자막 저장(.txt)</button>
         <!-- 잘못 인식됐을 때 바로 눌러 그 소리를 보내 주면 원인을 재현해 볼 수 있다 -->
-        <button v-if="onDevice" type="button" class="btn" @click="saveRecentAudio">⤓ 방금 10초 소리 저장(.wav)</button>
+        <button v-if="usesModel" type="button" class="btn" @click="saveRecentAudio">⤓ 방금 10초 소리 저장(.wav)</button>
       </div>
 
       <SessionLogPanel :log="sessionLog" :stats="stats" @save="saveLog" />

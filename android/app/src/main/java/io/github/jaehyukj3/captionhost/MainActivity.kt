@@ -33,6 +33,7 @@ import java.util.concurrent.Executors
  *
  * 화면 ↔ 앱 연결
  *  - 화면 → 앱: window.CaptionNative.prepare() / start() / stop() / saveFile(이름, 형식, base64) / recentAudio() / version()
+ *    폰 내장 음성인식: systemAvailable() / prepareSystem() / startSystem() (멈추기는 stop())
  *  - 앱 → 화면: window.__captionNative.emit({op: ...})
  */
 class MainActivity : Activity() {
@@ -40,6 +41,10 @@ class MainActivity : Activity() {
     private val site = Uri.parse(BuildConfig.SITE)
     private val models by lazy { ModelStore(this, BuildConfig.SITE) }
     private val engine = SpeechEngine(::emit)
+    /** 폰에 들어 있는 기기 안 음성인식 (갤럭시·구글) */
+    private val system by lazy { SystemSpeechEngine.create(this, ::emit) }
+    /** 마이크 권한을 물은 뒤 어느 방식으로 시작할지 */
+    @Volatile private var pendingSystem = false
     /** 모델 준비·마이크 켜고 끄기는 차례대로 (인식 자체는 SpeechEngine의 스레드에서) */
     private val worker = Executors.newSingleThreadExecutor()
     @Volatile private var preparing = false
@@ -68,6 +73,7 @@ class MainActivity : Activity() {
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 // 화면을 새로 열면(새로고침 등) 이전 화면이 켜 둔 마이크는 끈다
                 worker.execute { engine.stop() }
+                system?.stop {}
             }
         }
         web.webChromeClient = object : WebChromeClient() {
@@ -98,6 +104,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        system?.stop {}
         worker.execute { engine.stop() }
         worker.shutdown()
         web.destroy()
@@ -163,7 +170,7 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_MIC) return
         if (hasMic()) {
-            startMic()
+            if (pendingSystem) system?.start() else startMic()
             return
         }
         // 다시 묻지 않음 상태면 설정 화면으로 안내
@@ -252,6 +259,7 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun start() {
+            pendingSystem = false
             if (hasMic()) {
                 startMic()
                 return
@@ -262,9 +270,33 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
+        fun systemAvailable(): Boolean = system?.isAvailable == true
+
+        @JavascriptInterface
+        fun prepareSystem() {
+            system?.prepare() ?: emit(SpeechEngine.event("error").put("where", "prepare").put("message", "이 폰은 기기 안 음성인식을 지원하지 않습니다 (안드로이드 12 이상 필요)."))
+        }
+
+        @JavascriptInterface
+        fun startSystem() {
+            pendingSystem = true
+            if (hasMic()) {
+                system?.start() ?: emit(SpeechEngine.event("micError").put("message", "이 폰은 기기 안 음성인식을 지원하지 않습니다."))
+                return
+            }
+            runOnUiThread {
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+            }
+        }
+
+        /** 어느 방식이든 멈추고, 말하던 문장까지 확정한 뒤 flushed */
+        @JavascriptInterface
         fun stop() {
             worker.execute {
                 engine.stop()
+                val done = java.util.concurrent.CountDownLatch(1)
+                system?.stop { done.countDown() } ?: done.countDown()
+                done.await(4, java.util.concurrent.TimeUnit.SECONDS)
                 emit(SpeechEngine.event("flushed"))
             }
         }

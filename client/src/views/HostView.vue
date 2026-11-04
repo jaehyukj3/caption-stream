@@ -6,7 +6,7 @@ import WebHostConsole from '../components/host/WebHostConsole.vue';
 import { usePreferences } from '../composables/usePreferences';
 import { useUpdateCheck } from '../composables/useUpdateCheck';
 import { createSttProvider, sttKindFromUrl } from '../stt';
-import { nativeApp } from '../stt/NativeSttProvider';
+import { nativeApp, nativeSystemAvailable } from '../stt/NativeSttProvider';
 import { readJson, writeJson } from '../utils/storage';
 
 /** 탭을 새로고침해도 같은 방을 이어서 송출할 수 있도록 탭 단위로 보관 */
@@ -28,9 +28,15 @@ const webSession = ref(0);
 const sttKind = sttKindFromUrl();
 /** 웹 송출 음성인식: 브라우저 내장(구글·애플) 또는 이 기기 안(모델을 받아 직접 인식) */
 const WEB_ENGINE_KEY = 'caption.webEngine';
-const webEngine = ref<'webspeech' | 'ondevice' | 'native'>(nativeApp ? 'native' : readJson(localStorage, WEB_ENGINE_KEY, 'webspeech'));
-// 안드로이드 앱 안에서는 항상 앱 인식 (브라우저 방식 선택은 브라우저에서만 기억)
-watch(webEngine, (v) => !nativeApp && writeJson(localStorage, WEB_ENGINE_KEY, v));
+/** 안드로이드 앱 안: 폰 내장 기기 안 음성인식(더 정확) 또는 앱 안 모델. 고른 것은 따로 기억한다 */
+const APP_ENGINE_KEY = 'caption.appEngine';
+const systemAvailable = nativeSystemAvailable();
+const appDefault = systemAvailable ? 'nativeSystem' : 'native';
+const savedApp = readJson<string>(localStorage, APP_ENGINE_KEY, appDefault);
+const webEngine = ref<'webspeech' | 'ondevice' | 'native' | 'nativeSystem'>(
+  nativeApp ? (savedApp === 'native' || (savedApp === 'nativeSystem' && systemAvailable) ? savedApp : appDefault) : readJson(localStorage, WEB_ENGINE_KEY, 'webspeech'),
+);
+watch(webEngine, (v) => writeJson(localStorage, nativeApp ? APP_ENGINE_KEY : WEB_ENGINE_KEY, v));
 /** 안드로이드 브라우저로 연 경우 앱 받기 안내 */
 const offerApp = !nativeApp && /Android/i.test(navigator.userAgent);
 const sttSupported = computed(() => createSttProvider(mode.value === 'web' ? webEngine.value : sttKind).isSupported);
@@ -135,10 +141,26 @@ function onInvalid() {
       <div class="card start-card">
         <h1>웹 송출</h1>
         <p class="muted">프로그램 설치 없이 이 브라우저(PC·휴대폰)에서 송출합니다. 참석자는 QR을 찍어 자막을 봅니다.</p>
-        <p v-if="nativeApp" class="notice">
-          <b>폰 안 인식</b> — 음성은 이 휴대폰 안에서 글자로 바뀌고 밖으로 나가지 않습니다.
-          처음 한 번 모델 약 240MB를 받습니다(와이파이 권장).
-        </p>
+        <fieldset v-if="nativeApp" class="engines">
+          <legend>음성인식 방식</legend>
+          <p class="engine-note">음성 데이터는 말하는 목소리를 뜻합니다. 두 방식 모두 음성이 이 폰 밖으로 나가지 않습니다.</p>
+          <label v-if="systemAvailable" class="engine" :class="{ on: webEngine === 'nativeSystem' }">
+            <input v-model="webEngine" type="radio" value="nativeSystem" />
+            <span>
+              <b>폰 내장 음성인식 (권장)</b>
+              <small>자막: 이 폰에 들어 있는 음성인식(갤럭시·구글)이 만듦<br />음성 데이터: <b>외부로 안 나감</b></small>
+              <small>더 정확하고 받을 것이 없습니다. 한국어 오프라인 언어팩이 필요할 수 있습니다.</small>
+            </span>
+          </label>
+          <label class="engine" :class="{ on: webEngine === 'native' }">
+            <input v-model="webEngine" type="radio" value="native" />
+            <span>
+              <b>앱 안 모델</b>
+              <small>자막: 앱에 받아 둔 로컬 모델이 만듦<br />음성 데이터: <b>외부로 안 나감</b></small>
+              <small>폰 내장 음성인식을 쓸 수 없을 때. 정확도는 낮고, 처음 한 번 약 240MB를 받습니다(와이파이 권장).</small>
+            </span>
+          </label>
+        </fieldset>
         <fieldset v-else class="engines">
           <legend>음성인식 방식</legend>
           <p class="engine-note">음성 데이터는 말하는 목소리를 뜻합니다. 자막 글자는 어느 방식이든 암호화되어 전달됩니다.</p>
