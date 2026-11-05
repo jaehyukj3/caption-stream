@@ -49,6 +49,8 @@ const mic = useMicLevel();
 // STT 엔진 교체 지점: 기본은 노트북 안의 로컬 엔진 (stt/index.ts)
 const stt = createSttProvider();
 const sessionLog = useSessionLog({ code: props.code, mode: 'laptop', engine: sttKindFromUrl() === 'local' ? 'sensevoice' : 'webspeech' });
+/** 노트북 안 음성인식(SenseVoice) 결과는 띄어쓰기를 다듬는다 */
+const tidy = sttKindFromUrl() === 'local';
 stt.onDiag?.(sessionLog.stt);
 
 const micState = ref<MicState>('idle');
@@ -92,7 +94,7 @@ const localInterim = ref('');
 const sendInterim = throttle((text: string) => socket.send({ type: 'interim', text }), INTERIM_MIN_INTERVAL_MS);
 
 stt.onInterim((raw) => {
-  const text = dict.apply(raw);
+  const text = dict.apply(raw, tidy);
   localInterim.value = text;
   sendInterim(text);
   sttMessage.value = '';
@@ -102,11 +104,11 @@ stt.onFinal((raw) => {
   sendInterim.cancel();
   localInterim.value = '';
   // 확정 문장은 용어 사전 치환 후 송출. 화면에는 서버가 seq를 붙여 돌려준 것을 표시한다.
-  socket.send({ type: 'final', text: dict.apply(raw) });
+  socket.send({ type: 'final', text: dict.apply(raw, tidy) });
 });
 
 // 음성인식이 방금 문장을 고쳐 다시 보내면 새 줄 대신 마지막 줄을 바꾼다
-stt.onRevise?.((raw) => socket.send({ type: 'revise', text: dict.apply(raw) }));
+stt.onRevise?.((raw) => socket.send({ type: 'revise', text: dict.apply(raw, tidy) }));
 
 stt.onError((err) => {
   sttMessage.value = err.message;

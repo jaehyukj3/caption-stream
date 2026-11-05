@@ -122,17 +122,17 @@ function saveLog() {
 const localInterim = ref('');
 
 stt.onInterim((raw) => {
-  const text = dict.apply(raw);
+  const text = dict.apply(raw, usesModel);
   localInterim.value = text;
   room.pushInterim(text); // 방이 참석자 전송을 초당 4회로 조절한다
   sttMessage.value = '';
 });
 stt.onFinal((raw) => {
   localInterim.value = '';
-  room.pushFinal(dict.apply(raw));
+  room.pushFinal(dict.apply(raw, usesModel));
 });
 // 음성인식이 방금 문장을 고쳐 다시 보내면 새 줄 대신 마지막 줄을 바꾼다
-stt.onRevise?.((raw) => room.reviseLast(dict.apply(raw)));
+stt.onRevise?.((raw) => room.reviseLast(dict.apply(raw, usesModel)));
 stt.onError((err) => {
   sttMessage.value = err.message;
   if (err.fatal && micState.value !== 'ended') micState.value = 'paused';

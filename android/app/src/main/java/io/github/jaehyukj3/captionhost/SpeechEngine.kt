@@ -240,6 +240,15 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             remember(samples)
 
             drainFinals(vad)
+            // 강당처럼 울림·소음 때문에 쉼이 잘 안 잡히면 VAD는 12초를 꽉 채워 말 도중에 자른다.
+            // 말이 8초를 넘으면 소리가 움푹 꺼진 순간(쉼)에 먼저 확정한다 (강당 녹음: 확정 13→24회/3분, 정확도 그대로)
+            if (speaking && speechLen >= SOFT_CUT_SAMPLES && atPause(speech)) {
+                finalize(concat(speech))
+                vad.reset()
+                resetSpeech()
+                speaking = false
+                return
+            }
             if (speaking) maybeInterim()
         }
 
@@ -366,6 +375,16 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
         private const val PREROLL_SAMPLES = SAMPLE_RATE * 3 / 10
         /** 이보다 짧은 말소리 구간은 중간 결과를 내지 않는다 */
         private const val MIN_INTERIM_SAMPLES = SAMPLE_RATE / 2
+        /** 말이 이보다 길면 쉼(소리가 꺼진 순간)에서 먼저 확정한다 */
+        private const val SOFT_CUT_SAMPLES = SAMPLE_RATE * 8
+
+        /** 마지막 0.2초가 이번 말소리 구간의 보통 크기보다 훨씬 작으면(30% 미만) 쉼으로 본다 */
+        private fun atPause(chunks: List<FloatArray>): Boolean {
+            if (chunks.size < 4) return false
+            val e = chunks.map { c -> c.fold(0f) { n, v -> n + v * v } / c.size }
+            val median = e.sorted()[e.size / 2]
+            return (e[e.size - 1] + e[e.size - 2]) / 2 < median * 0.3f
+        }
         private const val MIN_INTERIM_INTERVAL_MS = 700L
 
         fun event(op: String): JSONObject = JSONObject().put("op", op)

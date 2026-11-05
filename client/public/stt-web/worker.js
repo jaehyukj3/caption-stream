@@ -15,6 +15,8 @@ const VAD_WINDOW = 512;
 const PREROLL_SAMPLES = SAMPLE_RATE * 0.3;
 /** 이보다 짧은 말소리 구간은 중간 결과를 내지 않는다 */
 const MIN_INTERIM_SAMPLES = SAMPLE_RATE * 0.5;
+/** 말이 이보다 길면 쉼(소리가 꺼진 순간)에서 먼저 확정한다 */
+const SOFT_CUT_SAMPLES = SAMPLE_RATE * 8;
 const MIN_INTERIM_INTERVAL_MS = 700;
 
 const post = (m) => self.postMessage(m);
@@ -192,6 +194,18 @@ function editDistance(a, b) {
   return prev[b.length];
 }
 
+/** 마지막 0.2초가 이번 말소리 구간의 보통 크기보다 훨씬 작으면(30% 미만) 쉼으로 본다 */
+function atPause(chunks) {
+  if (chunks.length < 4) return false;
+  const e = chunks.map((c) => {
+    let n = 0;
+    for (let i = 0; i < c.length; i++) n += c[i] * c[i];
+    return n / c.length;
+  });
+  const median = [...e].sort((p, q) => p - q)[e.length >> 1];
+  return (e[e.length - 1] + e[e.length - 2]) / 2 < median * 0.3;
+}
+
 function concat(parts) {
   const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
   let o = 0;
@@ -235,6 +249,15 @@ const session = {
     this.remember(samples);
 
     this.drainFinals();
+    // 강당처럼 울림·소음 때문에 쉼이 잘 안 잡히면 VAD는 12초를 꽉 채워 말 도중에 자른다.
+    // 말이 8초를 넘으면 소리가 움푹 꺼진 순간(쉼)에 먼저 확정한다 (강당 녹음: 확정 13→24회/3분, 정확도 그대로)
+    if (this.speaking && this.speechLen >= SOFT_CUT_SAMPLES && atPause(this.speech)) {
+      this.finalize(concat(this.speech));
+      vad.reset();
+      this.resetSpeech();
+      this.speaking = false;
+      return;
+    }
     if (this.speaking) this.maybeInterim();
   },
 

@@ -34,9 +34,9 @@ export function useDictionary() {
     return { re: new RegExp(pattern, 'g'), map };
   });
 
-  /** 띄어쓰기를 다듬은 뒤 사전 바꾸기를 적용한다 */
-  function apply(raw: string): string {
-    const text = tidySpacing(raw);
+  /** tidy: SenseVoice 결과면 띄어쓰기를 다듬는다 (폰·브라우저 음성인식은 이미 맞아서 하지 않음) */
+  function apply(raw: string, tidy = true): string {
+    const text = tidy ? tidySpacing(raw) : raw;
     const c = compiled.value;
     if (!c) return text;
     return text.replace(c.re, (m) => c.map.get(squash(m)) ?? m);
