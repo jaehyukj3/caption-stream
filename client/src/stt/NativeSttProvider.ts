@@ -28,6 +28,9 @@ type NativeEvent =
   | { op: 'micError'; message: string }
   | { op: 'result'; kind: 'interim' | 'final' | 'revise'; text: string }
   | { op: 'flushed' }
+  /** 폰 내장 인식이 한 문장을 끝내고 다시 켜지는 동안 (말이 빠질 수 있는 구간) */
+  | { op: 'paused' }
+  | { op: 'resumed'; gapMs: number }
   | { op: 'decode'; ms: number; audioMs: number }
   | { op: 'rx'; seconds: number; peak: number; speech: number; gain: number };
 
@@ -69,7 +72,7 @@ if (nativeApp) {
         const pct = Math.floor((m.loaded / m.total) * 10) * 10;
         if (pct !== lastPct) dlog(`모델 받기 ${(lastPct = pct)}%`);
       } else if (m.op === 'rx') dlog(`앱이 받은 소리: ${m.seconds.toFixed(1)}초, 최대 ${m.peak.toFixed(2)}, 말소리 감지 ${m.speech.toFixed(1)}초, 증폭 x${m.gain.toFixed(1)}`);
-      else if (m.op !== 'result' && m.op !== 'decode') dlog(`앱: ${m.op}${'message' in m ? ` ${m.message}` : ''}`);
+      else if (m.op !== 'result' && m.op !== 'decode' && m.op !== 'paused' && m.op !== 'resumed') dlog(`앱: ${m.op}${'message' in m ? ` ${m.message}` : ''}`);
       listeners.forEach((l) => l(m));
     },
   };
@@ -233,6 +236,13 @@ export class NativeSttProvider implements SttProvider {
         break;
       case 'decode':
         this.diagCb({ type: 'decode', detail: `${Math.round(m.ms)}/${Math.round(m.audioMs)}` });
+        break;
+      case 'paused':
+        this.diagCb({ type: 'stopped' });
+        break;
+      case 'resumed':
+        dlog(`폰 인식 다시 듣기까지 ${m.gapMs}ms`);
+        this.diagCb({ type: 'listening' });
         break;
       case 'micError':
         // 듣는 중에 마이크가 끊긴 경우

@@ -31,6 +31,8 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
     private var lastPartial = ""
     /** 연달아 실패한 횟수 (다시 시작 간격을 늘리고, 너무 많으면 알린다) */
     private var failures = 0
+    /** 듣기가 끊긴 시각 (다시 듣기 시작할 때까지 빠진 시간을 재서 테스트 기록에 남긴다) */
+    private var pausedAt = 0L
     private var onStopped: (() -> Unit)? = null
 
     val isAvailable: Boolean
@@ -48,8 +50,13 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && biasing.isNotEmpty()) {
-                putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, biasing)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (biasing.isNotEmpty()) putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, biasing)
+                // 연속 듣기: 문장마다 멈추지 않고 SESSION_MS 동안 계속 들으며 문장 단위 결과만 보낸다 (onSegmentResults).
+                // 문장마다 다시 켜면 켜는 순간의 말이 빠진다 (세미나 기록: "그냥 편하게 / 좋겠습니다" 사이가 빠짐).
+                // 지원하지 않는 인식기는 이 값을 무시하고 예전처럼 한 문장씩 끝낸다 → 그때는 다시 켜는 방식으로 이어 간다.
+                putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, SESSION_MS)
             }
         }
 
@@ -161,6 +168,23 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
             if (!announced) {
                 announced = true
                 emit(SpeechEngine.event("listening"))
+            } else if (pausedAt > 0) {
+                emit(SpeechEngine.event("resumed").put("gapMs", android.os.SystemClock.elapsedRealtime() - pausedAt))
+            }
+            pausedAt = 0
+        }
+
+        override fun onSegmentResults(segmentResults: Bundle) {
+            failures = 0
+            emitFinal(firstResult(segmentResults).ifBlank { lastPartial })
+        }
+
+        override fun onEndOfSegmentedSession() {
+            if (running) {
+                markPaused()
+                restart(recreate = false)
+            } else {
+                finish()
             }
         }
 
@@ -180,7 +204,12 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
         override fun onResults(results: Bundle?) {
             failures = 0
             emitFinal(firstResult(results).ifBlank { lastPartial })
-            if (running) restart(recreate = false) else finish()
+            if (running) {
+                markPaused()
+                restart(recreate = false)
+            } else {
+                finish()
+            }
         }
 
         override fun onError(error: Int) {
@@ -192,6 +221,7 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
                 // 말이 없었거나 알아듣지 못함: 하던 말은 확정하고 계속 듣는다
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT, SpeechRecognizer.ERROR_NO_MATCH -> {
                     if (lastPartial.isNotBlank()) emitFinal(lastPartial)
+                    markPaused()
                     restart(recreate = false)
                 }
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> fail("마이크 권한이 없습니다. 앱 권한에서 마이크를 허용해 주세요.")
@@ -201,10 +231,18 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
                     // 바쁨, 연결 끊김 등: 잠시 뒤 새로 만들어 다시 듣는다
                     if (lastPartial.isNotBlank()) emitFinal(lastPartial)
                     failures++
+                    markPaused()
                     if (failures >= MAX_FAILURES) fail("폰 음성인식이 계속 멈춥니다 (오류 $error). 다시 시작해 주세요.")
                     else restart(recreate = true)
                 }
             }
+        }
+    }
+
+    private fun markPaused() {
+        if (pausedAt == 0L) {
+            pausedAt = android.os.SystemClock.elapsedRealtime()
+            emit(SpeechEngine.event("paused"))
         }
     }
 
@@ -220,6 +258,8 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
         private const val STOP_TIMEOUT_MS = 2500L
         private const val MAX_FAILURES = 15
         private const val MAX_TERMS = 100
+        /** 연속 듣기 한 번의 길이. 끝나면 곧바로 다시 시작한다 */
+        private const val SESSION_MS = 10 * 60 * 1000L
 
         /** 안드로이드 12 미만에서는 기기 안 처리를 보장할 수 없어 쓰지 않는다 (null) */
         fun create(context: Context, emit: (JSONObject) -> Unit): SystemSpeechEngine? =
