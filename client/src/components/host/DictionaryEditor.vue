@@ -3,6 +3,8 @@ import { ref } from 'vue';
 import type { DictEntry } from '../../composables/useDictionary';
 
 defineProps<{ entries: readonly DictEntry[] }>();
+/** 군말(음, 어) 지우기 */
+const fillers = defineModel<boolean>('fillers', { default: true });
 const emit = defineEmits<{ add: [from: string, to: string]; remove: [index: number] }>();
 
 const from = ref('');
@@ -36,12 +38,24 @@ function submit() {
       </li>
     </ul>
     <p v-else class="muted hint">자주 틀리는 전문용어·이름을 등록하면 송출 전에 자동으로 고쳐집니다. 띄어쓰기 차이는 무시합니다.</p>
+    <p class="muted hint">교정어는 이 강의의 용어로 폰 내장 음성인식에 미리 알려 줍니다 (안드로이드 13 이상).</p>
+    <label class="fillers">
+      <input v-model="fillers" type="checkbox" />
+      군말(음, 어) 지우기 <span class="muted">— 말을 그대로 남겨야 하는 기록이면 끄세요</span>
+    </label>
   </section>
 </template>
 
 <style scoped>
 .count {
   font-weight: 400;
+}
+.fillers {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 14px;
 }
 .add {
   display: grid;

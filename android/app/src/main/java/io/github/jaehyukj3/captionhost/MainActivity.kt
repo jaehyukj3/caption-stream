@@ -269,6 +269,17 @@ class MainActivity : Activity() {
             }
         }
 
+        /** 폰 내장 인식에 미리 알려 줄 이 강의의 용어 (JSON 문자열 배열) */
+        @JavascriptInterface
+        fun setBiasing(json: String) {
+            val terms = try {
+                org.json.JSONArray(json).let { a -> (0 until a.length()).map { a.getString(it) } }
+            } catch (_: Exception) {
+                emptyList()
+            }
+            system?.setBiasing(terms)
+        }
+
         @JavascriptInterface
         fun systemAvailable(): Boolean = system?.isAvailable == true
 

@@ -155,6 +155,7 @@ async function start() {
       sttMessage.value = '마이크를 켜는 중입니다. 마이크 권한을 묻는 창이 떴다면 허용해 주세요.';
   }, 8000);
   try {
+    stt.setVocabulary?.(dict.terms.value);
     await stt.start();
     modelState.value = onDevice ? 'ready' : 'idle';
     micState.value = 'running';
@@ -280,7 +281,7 @@ onBeforeUnmount(() => {
 
       <SessionLogPanel :log="sessionLog" :stats="stats" @save="saveLog" />
 
-      <DictionaryEditor :entries="dict.entries.value" @add="dict.add" @remove="dict.remove" />
+      <DictionaryEditor v-model:fillers="dict.fillers.value" :entries="dict.entries.value" @add="dict.add" @remove="dict.remove" />
 
       <details class="card diag">
         <summary>진단 정보 (문제가 있을 때 이 화면을 캡처해 보내 주세요)</summary>

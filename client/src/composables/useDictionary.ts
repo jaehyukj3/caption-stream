@@ -1,5 +1,5 @@
 import { computed, ref, watch } from 'vue';
-import { tidySpacing } from '../stt/tidyText';
+import { dropFillers, tidySpacing } from '../stt/tidyText';
 import { readJson, writeJson } from '../utils/storage';
 
 export interface DictEntry {
@@ -8,6 +8,9 @@ export interface DictEntry {
 }
 
 const KEY = 'caption.dictionary';
+const FILLER_KEY = 'caption.dropFillers';
+/** 인식기에 미리 알려 줄 용어 수 (많을수록 오히려 흐려진다: 문맥에 맞는 100개 이하 권장) */
+const MAX_TERMS = 100;
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const squash = (s: string) => s.replace(/\s+/g, '');
 
@@ -19,6 +22,11 @@ const squash = (s: string) => s.replace(/\s+/g, '');
 export function useDictionary() {
   const entries = ref<DictEntry[]>(readJson(localStorage, KEY, []));
   watch(entries, (v) => writeJson(localStorage, KEY, v), { deep: true });
+  /** 군말(음, 어) 지우기. 기본은 켜짐 */
+  const fillers = ref<boolean>(readJson(localStorage, FILLER_KEY, true));
+  watch(fillers, (v) => writeJson(localStorage, FILLER_KEY, v));
+  /** 사전의 교정어 = 이 강의의 용어. 폰 내장 음성인식에 미리 알려 준다 (지원하는 폰만) */
+  const terms = computed(() => [...new Set(entries.value.map((e) => e.to.trim()).filter(Boolean))].slice(0, MAX_TERMS));
 
   const compiled = computed(() => {
     const map = new Map<string, string>();
@@ -36,7 +44,8 @@ export function useDictionary() {
 
   /** tidy: SenseVoice 결과면 띄어쓰기를 다듬는다 (폰·브라우저 음성인식은 이미 맞아서 하지 않음) */
   function apply(raw: string, tidy = true): string {
-    const text = tidy ? tidySpacing(raw) : raw;
+    const spaced = tidy ? tidySpacing(raw) : raw;
+    const text = fillers.value ? dropFillers(spaced) : spaced;
     const c = compiled.value;
     if (!c) return text;
     return text.replace(c.re, (m) => c.map.get(squash(m)) ?? m);
@@ -55,5 +64,5 @@ export function useDictionary() {
     entries.value.splice(index, 1);
   }
 
-  return { entries, apply, add, remove };
+  return { entries, fillers, terms, apply, add, remove };
 }

@@ -20,6 +20,8 @@ export interface SttProvider {
   setDeviceId?(deviceId: string | null): void;
   /** 최근 몇 초 동안 엔진으로 보낸 소리 (16kHz Int16, 진단용). 지원하는 엔진만. */
   recentAudio?(): Int16Array | null;
+  /** 이 강의의 용어 (인식기가 그 낱말 쪽으로 알아듣도록). 지원하는 엔진만, 다음 start()부터 */
+  setVocabulary?(terms: string[]): void;
   /** 진단용 이벤트 (테스트 기록): 인식이 실제로 듣기 시작/멈춤, 오류 */
   onDiag?(cb: (e: SttDiag) => void): void;
 }

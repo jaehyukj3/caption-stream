@@ -15,6 +15,8 @@ interface CaptionNativeApi {
   systemAvailable?(): boolean;
   prepareSystem?(): void;
   startSystem?(): void;
+  /** 폰 내장 인식에 미리 알려 줄 용어 (JSON 배열). 예전 앱에는 없다. */
+  setBiasing?(json: string): void;
 }
 
 type NativeEvent =
@@ -119,6 +121,7 @@ export class NativeSttProvider implements SttProvider {
 
   private running = false;
   private lastInterim = '';
+  private terms: string[] = [];
   private readonly listener = (m: NativeEvent) => this.onNative(m);
   private interimCb: (t: string) => void = () => {};
   private finalCb: (t: string) => void = () => {};
@@ -149,6 +152,9 @@ export class NativeSttProvider implements SttProvider {
   onRevise(cb: (text: string) => void) {
     this.reviseCb = cb;
   }
+  setVocabulary(terms: string[]) {
+    this.terms = terms;
+  }
   onDiag(cb: (e: SttDiag) => void) {
     this.diagCb = cb;
   }
@@ -175,7 +181,10 @@ export class NativeSttProvider implements SttProvider {
         }
       };
       listeners.add(l);
-      if (this.mode === 'system') nativeApp!.startSystem!();
+      if (this.mode === 'system') {
+        nativeApp!.setBiasing?.(JSON.stringify(this.terms));
+        nativeApp!.startSystem!();
+      }
       else nativeApp!.start();
     });
     this.running = true;

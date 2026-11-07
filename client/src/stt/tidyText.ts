@@ -37,3 +37,16 @@ export function tidySpacing(text: string): string {
   }
   return out.join(' ');
 }
+
+/**
+ * 군말 지우기: 낱말로 홀로 쓰인 "음", "어" 같은 머뭇거림을 뺀다 (읽기 좋은 자막용).
+ * 발화를 그대로 남겨야 하는 기록(연구 인터뷰, 감사 기록)에는 끄고 쓴다.
+ */
+const FILLERS = new Set(['음', '음음', '어', '어어', '으', '흠', '엄', '에', '아']);
+export function dropFillers(text: string): string {
+  return text
+    .split(' ')
+    .filter((w) => !FILLERS.has(w.replace(/[.,?!…~]+$/, '')))
+    .join(' ')
+    .trim();
+}

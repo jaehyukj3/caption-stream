@@ -36,13 +36,22 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
     val isAvailable: Boolean
         get() = SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
 
-    private val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, LANGUAGE)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-    }
+    /** 이 강의의 용어: 인식기가 그 낱말 쪽으로 알아듣도록 미리 알려 준다 (안드로이드 13 이상, 지원하는 인식기만) */
+    private var biasing: ArrayList<String> = arrayListOf()
+
+    fun setBiasing(terms: List<String>) = main.post { biasing = ArrayList(terms.take(MAX_TERMS)) }
+
+    private val intent: Intent
+        get() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, LANGUAGE)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && biasing.isNotEmpty()) {
+                putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, biasing)
+            }
+        }
 
     /** 한국어 기기 안 인식이 준비됐는지 확인한다. 언어팩이 없으면 받기를 요청한다. ready / error(where=prepare) */
     fun prepare() = main.post {
@@ -210,6 +219,7 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
         private const val LANGUAGE = "ko-KR"
         private const val STOP_TIMEOUT_MS = 2500L
         private const val MAX_FAILURES = 15
+        private const val MAX_TERMS = 100
 
         /** 안드로이드 12 미만에서는 기기 안 처리를 보장할 수 없어 쓰지 않는다 (null) */
         fun create(context: Context, emit: (JSONObject) -> Unit): SystemSpeechEngine? =

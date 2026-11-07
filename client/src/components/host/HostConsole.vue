@@ -128,6 +128,7 @@ async function start() {
   try {
     await mic.start(micDeviceId.value);
     stt.setDeviceId?.(micDeviceId.value);
+    stt.setVocabulary?.(dict.terms.value);
     await stt.start();
     micState.value = 'running';
     void refreshDevices(); // 권한을 받은 뒤에야 장치 이름이 보인다
@@ -251,7 +252,7 @@ onBeforeUnmount(() => {
 
       <SessionLogPanel :log="sessionLog" :stats="stats" @save="requestSaveLog" />
 
-      <DictionaryEditor :entries="dict.entries.value" @add="dict.add" @remove="dict.remove" />
+      <DictionaryEditor v-model:fillers="dict.fillers.value" :entries="dict.entries.value" @add="dict.add" @remove="dict.remove" />
     </aside>
   </div>
 </template>
