@@ -15,9 +15,13 @@ const VAD_WINDOW = 512;
 const PREROLL_SAMPLES = SAMPLE_RATE * 0.3;
 /** 이보다 짧은 말소리 구간은 중간 결과를 내지 않는다 */
 const MIN_INTERIM_SAMPLES = SAMPLE_RATE * 0.5;
-/** 말이 이보다 길면 쉼(소리가 꺼진 순간)에서 먼저 확정한다 */
-const SOFT_CUT_SAMPLES = SAMPLE_RATE * 8;
 const MIN_INTERIM_INTERVAL_MS = 700;
+/** 이만큼 지난 낱말만 고정한다 (갓 들어온 끝부분은 다음 인식에서 자주 바뀐다) */
+const LOCK_GUARD_SEC = 1.0;
+/** 고정된 글자가 이보다 많으면 줄을 확정한다 */
+const MAX_LINE_CHARS = 40;
+/** 줄이 이보다 길면 마지막 낱말 앞에서 줄을 확정한다 */
+const MAX_LINE_SEC = 15;
 
 const post = (m) => self.postMessage(m);
 /** 진단: 엔진이 실제로 받은 소리 (3초마다 알림) */
@@ -102,7 +106,7 @@ function init() {
         threshold: 0.35,
         minSilenceDuration: 0.4, // 0.4초 쉬면 문장 확정 (0.5와 정확도 같고 0.1초 빠름)
         minSpeechDuration: 0.25,
-        maxSpeechDuration: 12, // 쉬지 않고 말해도 12초마다 끊어서 확정
+        maxSpeechDuration: 30, // 줄은 session이 나누므로 VAD 구간 길이 제한은 넉넉하게 (버퍼 60초 안)
         windowSize: VAD_WINDOW,
       },
       tenVad: { model: '', threshold: 0.5, minSilenceDuration: 0.5, minSpeechDuration: 0.25, maxSpeechDuration: 20, windowSize: 256 },
@@ -110,7 +114,7 @@ function init() {
       numThreads: 1,
       provider: 'cpu',
       debug: 0,
-      bufferSizeInSeconds: 30,
+      bufferSizeInSeconds: 60,
     });
     // 엔진이 모델을 읽어 들였으니 파일 사본은 지워 메모리를 아낀다
     for (const f of ['/sense-voice.onnx', '/silero_vad.onnx', '/tokens.txt']) {
@@ -128,83 +132,34 @@ function init() {
   return initPromise;
 }
 
-function transcribe(samples) {
+/** 받아 적어 낱말 단위로 돌려준다. start/end는 세션 시작부터 센 초 (토큰 앞 공백이 낱말 시작, 문장부호는 앞 낱말에) */
+function transcribeWords(samples, offsetSec) {
   const t0 = performance.now();
   const stream = recognizer.createStream();
   stream.acceptWaveform(SAMPLE_RATE, samples);
   recognizer.decode(stream);
-  const text = recognizer.getResult(stream).text || '';
+  const r = recognizer.getResult(stream);
   stream.free();
   post({ op: 'decode', ms: performance.now() - t0, audioMs: (samples.length / SAMPLE_RATE) * 1000 });
-  return text.replace(/\s+/g, ' ').trim();
-}
-
-/**
- * 확정 결과가 문장 앞부분을 빠뜨렸으면(예: 중간 "문을 닫습니다" → 확정 "닫습니다") 마지막 중간 결과의 앞부분으로 채운다.
- * SenseVoice는 같은 말소리라도 끝까지 넣고 다시 인식하면 앞 어절을 빼먹을 때가 있다 (잡음 많은 소리에서 잦음).
- * 확정 결과가 중간 결과의 뒷부분과 맞아떨어질 때만 채우고, 전혀 다른 문장이면 확정 결과를 그대로 쓴다.
- */
-function mergeFinal(interim, final) {
-  const fi = normText(final);
-  const it = normText(interim);
-  if (!it || fi.length >= it.length * 0.8) return final;
-  if (!fi) return interim;
-  let best = -1;
-  let bestRatio = Infinity;
-  for (let p = 1; p < interim.length; p++) {
-    if (interim[p - 1] !== ' ') continue; // 어절 경계에서만
-    const a = normText(interim.slice(p));
-    if (!a) continue;
-    let cost = Infinity;
-    for (let k = Math.max(1, a.length - 2); k <= Math.min(fi.length, a.length + 2); k++) cost = Math.min(cost, editDistance(a, fi.slice(0, k)));
-    const ratio = cost / a.length;
-    if (ratio <= 0.34 && ratio < bestRatio) {
-      best = p;
-      bestRatio = ratio;
+  const out = [];
+  (r.tokens || []).forEach((t, i) => {
+    const at = offsetSec + ((r.timestamps && r.timestamps[i]) || 0);
+    const text = t.trim();
+    if (!text) return;
+    const punct = /^[.,?!]+$/.test(text);
+    const last = out[out.length - 1];
+    if (!last || (!punct && (t.startsWith(' ') || /[.,?!]$/.test(last.text)))) out.push({ text, start: at, end: at + 0.12 });
+    else {
+      last.text += text;
+      last.end = at + 0.12;
     }
-  }
-  return best < 0 ? final : `${interim.slice(0, best).trim()} ${final}`;
-}
-
-/** 다른 후보들과의 글자 차이 합이 가장 작은 후보 (같으면 앞의 것) */
-function medoid(cands) {
-  let best = cands[0];
-  let bestD = Infinity;
-  for (const c of cands) {
-    const d = cands.reduce((n, o) => n + editDistance(normText(c), normText(o)), 0);
-    if (d < bestD) {
-      best = c;
-      bestD = d;
-    }
-  }
-  return best;
-}
-
-function normText(s) {
-  return s.replace(/[\s.,?!·…~"'()]/g, '');
-}
-
-function editDistance(a, b) {
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    for (let j = 1; j <= b.length; j++) cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
-    prev = cur;
-  }
-  return prev[b.length];
-}
-
-/** 마지막 0.2초가 이번 말소리 구간의 보통 크기보다 훨씬 작으면(30% 미만) 쉼으로 본다 */
-function atPause(chunks) {
-  if (chunks.length < 4) return false;
-  const e = chunks.map((c) => {
-    let n = 0;
-    for (let i = 0; i < c.length; i++) n += c[i] * c[i];
-    return n / c.length;
   });
-  const median = [...e].sort((p, q) => p - q)[e.length >> 1];
-  return (e[e.length - 1] + e[e.length - 2]) / 2 < median * 0.3;
+  return out;
 }
+
+const joinWords = (ws) => ws.map((w) => w.text).join(' ');
+const wordKey = (w) => w.text.replace(/[.,?!]/g, '');
+const endsSentence = (w) => /[.?!]$/.test(w.text);
 
 function concat(parts) {
   const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
@@ -216,17 +171,26 @@ function concat(parts) {
   return out;
 }
 
-/** 노트북 프로그램(server/src/stt/sttWorker.ts)의 Session과 같은 동작 */
+/**
+ * 노트북 프로그램(server/src/stt/sttWorker.ts)의 Session과 같은 동작: 브라우저 음성인식처럼 보이도록 '연속 일치'로 줄을 나누고 확정한다.
+ *  - 두 번 연달아 같게 나온 앞부분 낱말(1초 이상 지난 것)은 고정해 다시 바뀌지 않게 한다
+ *  - 고정된 낱말이 문장 끝(. ? !)이거나 40자를 넘거나 줄이 15초를 넘으면 그 자리에서 줄을 확정한다
+ *  - 말이 끝나면(짧은 쉼) 고정되지 않은 뒷부분만 다시 받아 적어 붙여 확정한다
+ * (강당 녹음·낭독 시험: 정확도는 비슷하고, 글자가 더 바뀌지 않게 되기까지 2.7초 → 1.3초, 확정할 때 보이던 글자가 바뀌는 일 0번)
+ */
 const session = {
   pending: new Float32Array(0),
   preroll: [],
   prerollLen: 0,
-  speech: [],
-  speechLen: 0,
+  line: [],
+  lineLen: 0,
+  lineStart: 0,
+  clock: 0,
   speaking: false,
+  locked: [],
+  anchor: null,
+  prev: [],
   lastInterim: '',
-  /** 이번 문장의 중간 결과들 (확정 다수결에 씀) */
-  interims: [],
   lastInterimAt: 0,
   lastDecodeMs: 0,
 
@@ -235,103 +199,133 @@ const session = {
     let o = 0;
     for (; o + VAD_WINDOW <= buf.length; o += VAD_WINDOW) vad.acceptWaveform(buf.subarray(o, o + VAD_WINDOW));
     this.pending = buf.slice(o);
+    while (!vad.isEmpty()) vad.pop(); // 구간은 쓰지 않고 말하는 중인지만 본다
 
     const detected = vad.isDetected();
     if (detected && !this.speaking) {
-      this.speech = [...this.preroll];
-      this.speechLen = this.prerollLen;
+      this.line = [...this.preroll];
+      this.lineLen = this.prerollLen;
+      this.lineStart = this.clock - this.prerollLen / SAMPLE_RATE;
+      this.resetLocks();
     }
-    if (detected) {
-      this.speech.push(samples);
-      this.speechLen += samples.length;
+    if (detected || this.speaking) {
+      this.line.push(samples);
+      this.lineLen += samples.length;
     }
-    this.speaking = detected;
+    this.clock += samples.length / SAMPLE_RATE;
     this.remember(samples);
 
-    this.drainFinals();
-    // 강당처럼 울림·소음 때문에 쉼이 잘 안 잡히면 VAD는 12초를 꽉 채워 말 도중에 자른다.
-    // 말이 8초를 넘으면 소리가 움푹 꺼진 순간(쉼)에 먼저 확정한다 (강당 녹음: 확정 13→24회/3분, 정확도 그대로)
-    if (this.speaking && this.speechLen >= SOFT_CUT_SAMPLES && atPause(this.speech)) {
-      this.finalize(concat(this.speech));
-      vad.reset();
-      this.resetSpeech();
+    if (!detected && this.speaking) {
       this.speaking = false;
+      this.endLine();
       return;
     }
+    this.speaking = detected;
     if (this.speaking) this.maybeInterim();
   },
 
   flush() {
-    vad.flush();
-    const hadSegment = !vad.isEmpty();
-    this.drainFinals();
-    if (!hadSegment && this.speechLen > MIN_INTERIM_SAMPLES) this.emitFinal(transcribe(concat(this.speech)));
+    if (this.lineLen > MIN_INTERIM_SAMPLES) this.endLine();
     this.reset();
   },
 
   reset() {
     vad.reset();
-    this.resetSpeech();
+    this.line = [];
+    this.lineLen = 0;
+    this.resetLocks();
     this.speaking = false;
     this.pending = new Float32Array(0);
     this.preroll = [];
     this.prerollLen = 0;
   },
 
-  drainFinals() {
-    while (!vad.isEmpty()) {
-      const seg = vad.front();
-      vad.pop();
-      this.finalize(seg.samples);
-      this.resetSpeech();
-    }
-  },
-
   maybeInterim() {
     const now = Date.now();
     const interval = Math.max(MIN_INTERIM_INTERVAL_MS, this.lastDecodeMs * 2);
-    if (this.speechLen < MIN_INTERIM_SAMPLES || now - this.lastInterimAt < interval) return;
-    const t0 = Date.now();
-    const text = transcribe(concat(this.speech));
-    this.lastDecodeMs = Date.now() - t0;
+    if (this.lineLen < MIN_INTERIM_SAMPLES || now - this.lastInterimAt < interval) return;
+    const fresh = this.afterLocked(transcribeWords(concat(this.line), this.lineStart));
+    this.lastDecodeMs = Date.now() - now;
     this.lastInterimAt = Date.now();
-    if (text && text !== this.lastInterim) {
-      this.lastInterim = text;
-      this.interims.push(text);
-      post({ op: 'result', kind: 'interim', text });
+
+    // 두 번 연달아 같은 앞부분, 그리고 1초 이상 지난 낱말만 고정
+    let n = 0;
+    while (n < fresh.length && n < this.prev.length && wordKey(fresh[n]) === wordKey(this.prev[n]) && fresh[n].end < this.clock - LOCK_GUARD_SEC) n++;
+    for (let i = 0; i < n; i++) this.lockWord(fresh[i]);
+    const rest = fresh.slice(n);
+    this.prev = rest;
+    this.sendInterim(joinWords([...this.locked, ...rest]));
+
+    // 줄 확정: 고정된 낱말이 문장 끝이면 거기서, 고정 글자가 많거나 줄이 너무 길면 지금까지
+    const si = this.locked.findIndex(endsSentence);
+    if (si >= 0) {
+      const carry = this.locked.slice(si + 1);
+      this.finishLine(this.locked.slice(0, si + 1), carry.length ? carry[0].start : rest.length ? rest[0].start : this.clock);
+      for (const w of carry) this.lockWord(w);
+    } else if (this.locked.reduce((a, w) => a + w.text.length, 0) >= MAX_LINE_CHARS) {
+      this.finishLine(this.locked, rest.length ? rest[0].start : this.clock);
+    } else if (this.lineLen / SAMPLE_RATE > MAX_LINE_SEC && rest.length > 1) {
+      this.finishLine([...this.locked, ...rest.slice(0, -1)], rest[rest.length - 1].start);
     }
   },
 
-  /**
-   * 문장 확정. 바로 확정해 보내고(기다리지 않게), 결과가 마지막 중간 결과와 다르면(맞게 보였다가 틀리게 바뀌는 경우)
-   * 소리를 조금 달리 넣어 두 번 더 인식한 뒤 최근 중간 결과들까지 넣어 서로 가장 비슷한 결과(다수결)를 고른다.
-   * 그 결과가 처음 확정한 것과 다르면 방금 줄을 고친다(revise).
-   * (잡음·잔향을 섞은 낭독 48문장: 글자 오류 6.9% → 6.4%)
-   */
-  finalize(samples) {
-    const first = transcribe(samples);
-    const interim = this.lastInterim;
-    const sent = this.emitFinal(first);
-    if (!interim || !sent || normText(first) === normText(interim)) return;
-    const pad = new Float32Array(SAMPLE_RATE * 0.6);
-    const cands = [first, transcribe(concat([pad, samples, pad])), ...this.interims.slice(-2)];
-    if (this.speechLen > 0) cands.push(transcribe(concat(this.speech)));
-    const better = mergeFinal(interim, medoid(cands.filter(Boolean)));
-    if (better && better !== sent) post({ op: 'result', kind: 'revise', text: better });
-  },
-
-  emitFinal(raw) {
-    const text = mergeFinal(this.lastInterim, raw);
-    this.lastInterim = '';
+  /** 말이 끝났을 때: 고정되지 않은 뒷부분만 다시 받아 적어 붙여 확정 */
+  endLine() {
+    const tail = this.afterLocked(transcribeWords(concat(this.line), this.lineStart));
+    const text = joinWords([...this.locked, ...tail]);
     if (text) post({ op: 'result', kind: 'final', text });
-    return text;
+    this.line = [];
+    this.lineLen = 0;
+    this.resetLocks();
   },
 
-  resetSpeech() {
-    this.interims = [];
-    this.speech = [];
-    this.speechLen = 0;
+  /** 낱말들을 한 줄로 확정하고, cutSec 앞의 소리를 버려 다음 줄을 시작한다 */
+  finishLine(words, cutSec) {
+    const text = joinWords(words);
+    if (text) post({ op: 'result', kind: 'final', text });
+    const all = concat(this.line);
+    const cut = Math.max(0, Math.min(all.length, Math.round((cutSec - 0.02 - this.lineStart) * SAMPLE_RATE)));
+    this.line = [all.subarray(cut)];
+    this.lineLen = all.length - cut;
+    this.lineStart += cut / SAMPLE_RATE;
+    this.resetLocks();
+  },
+
+  lockWord(w) {
+    this.locked.push(w);
+    this.anchor = w;
+  },
+
+  resetLocks() {
+    this.locked = [];
+    this.anchor = null;
+    this.prev = [];
+    this.lastInterim = '';
     this.lastInterimAt = 0;
+  },
+
+  /** 인식 결과에서 이미 고정한 부분 다음만 고른다: 마지막 고정 낱말을 글자로 찾고(±0.5초), 못 찾으면 시각으로 */
+  afterLocked(ws) {
+    const a = this.anchor;
+    if (!a) return ws;
+    let best = -1;
+    let bestDt = Infinity;
+    ws.forEach((w, i) => {
+      const dt = Math.abs(w.start - a.start);
+      if (wordKey(w) === wordKey(a) && dt < 0.5 && dt < bestDt) {
+        best = i;
+        bestDt = dt;
+      }
+    });
+    if (best >= 0) return ws.slice(best + 1);
+    // 고정 낱말이 둘로 나뉘어 다시 나온 경우("다리를" → "다리" + "를")도 건너뜀
+    return ws.filter((w) => w.start > a.end - 0.05);
+  },
+
+  sendInterim(text) {
+    if (!text || text === this.lastInterim) return;
+    this.lastInterim = text;
+    post({ op: 'result', kind: 'interim', text });
   },
 
   remember(samples) {
