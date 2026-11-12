@@ -3,3 +3,4 @@ build/
 local.properties
 app/libs/*.aar
 android/build.log
+app/src/main/assets/site/

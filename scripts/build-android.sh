@@ -13,6 +13,13 @@ if [ ! -f "$aar" ]; then
   curl -fsSL -o "$aar" https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar
 fi
 
+# 인터넷이 없을 때도 앱이 열리도록 송출 화면 파일(client/dist, 음성인식 엔진·앱·내려받기 파일 제외)을 앱에 넣는다
+site="$root/android/app/src/main/assets/site"
+[ -f "$root/client/dist/index.html" ] || { echo "::error title=android::client/dist가 없습니다 (npm run build 먼저)"; exit 1; }
+rm -rf "$site" && mkdir -p "$site"
+(cd "$root/client/dist" && find . -type f ! -path './stt-web/*' ! -path './app/*' ! -path './dl/*' ! -name '*.zip' ! -name '*.apk' ! -name '_headers' -exec cp --parents {} "$site/" \;)
+echo "앱에 넣은 화면 파일: $(du -sh "$site" | cut -f1)"
+
 cd "$root/android"
 set +e
 gradle --no-daemon assembleRelease 2>&1 | tee build.log

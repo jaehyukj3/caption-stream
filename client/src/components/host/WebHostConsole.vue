@@ -193,7 +193,7 @@ const connLabel = computed(
       off: '중계 미사용',
       connecting: '중계 서버 연결 중…',
       online: '참석자 접속 가능',
-      offline: '인터넷 끊김 — 다시 연결하는 중',
+      offline: '인터넷 없음 — 이 화면에만 자막 표시 (연결되면 자동 송출)',
     })[share.value?.relay ?? 'connecting'],
 );
 watch(

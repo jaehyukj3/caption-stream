@@ -6,6 +6,8 @@ import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,7 +19,9 @@ import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -30,6 +34,7 @@ import java.util.concurrent.Executors
 /**
  * 송출 화면(사이트의 /host)을 그대로 띄우고, 음성인식만 앱이 직접 한다.
  * 방 만들기·암호화·참석자 연결은 웹 송출과 똑같이 화면(자바스크립트)이 맡는다.
+ * 인터넷이 없으면 앱에 넣어 둔 같은 화면 파일(assets/site)로 연다: 자막은 이 폰 화면에 보이고, 인터넷이 되면 중계가 저절로 붙는다.
  *
  * 화면 ↔ 앱 연결
  *  - 화면 → 앱: window.CaptionNative.prepare() / start() / stop() / saveFile(이름, 형식, base64) / recentAudio() / version()
@@ -48,6 +53,8 @@ class MainActivity : Activity() {
     /** 모델 준비·마이크 켜고 끄기는 차례대로 (인식 자체는 SpeechEngine의 스레드에서) */
     private val worker = Executors.newSingleThreadExecutor()
     @Volatile private var preparing = false
+    /** 사이트에 닿지 않아(인터넷 없음·차단) 앱에 넣어 둔 화면 파일로 여는 중 */
+    @Volatile private var offline = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,6 +75,21 @@ class MainActivity : Activity() {
                 // 참석자 화면 링크 등은 브라우저로 연다 (이 화면에서 벗어나면 송출이 끝나므로)
                 openExternal(request.url)
                 return true
+            }
+
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                val u = request.url
+                if (request.method != "GET" || u.host != site.host) return null
+                if (!offline && hasInternet()) return null
+                return bundled(u.path ?: "/") // 넣어 둔 파일이 없으면(중계 연결 등) 그대로 네트워크로
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                // 인터넷은 잡히는데 사이트가 막힌 경우(기관 방화벽 등): 넣어 둔 화면으로 다시 연다
+                if (request.isForMainFrame && !offline && isHostPage(request.url)) {
+                    offline = true
+                    view.post { view.loadUrl(request.url.toString()) }
+                }
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -109,6 +131,40 @@ class MainActivity : Activity() {
         worker.shutdown()
         web.destroy()
         super.onDestroy()
+    }
+
+    /** 실제로 인터넷이 되는지 (와이파이에 붙어 있어도 인터넷이 없는 핫스팟이면 false) */
+    private fun hasInternet(): Boolean {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    /** 앱에 넣어 둔 화면 파일. /host 등 화면 주소는 index.html, 나머지는 같은 경로의 파일 */
+    private fun bundled(path: String): WebResourceResponse? {
+        val file = when {
+            path == "/" || path == "/host" || path.startsWith("/host/") -> "index.html"
+            path.startsWith("/assets/") || path == "/version.json" || path.matches(Regex("/[\\w.-]+\\.(svg|png|ico|webmanifest)")) -> path.removePrefix("/")
+            else -> return null
+        }
+        val stream = try {
+            assets.open("site/$file")
+        } catch (_: java.io.IOException) {
+            return null
+        }
+        val mime = when (file.substringAfterLast('.')) {
+            "html" -> "text/html"
+            "js", "mjs" -> "text/javascript"
+            "css" -> "text/css"
+            "json" -> "application/json"
+            "svg" -> "image/svg+xml"
+            "png" -> "image/png"
+            "ico" -> "image/x-icon"
+            "webmanifest" -> "application/manifest+json"
+            "woff2" -> "font/woff2"
+            else -> "application/octet-stream"
+        }
+        return WebResourceResponse(mime, "utf-8", stream)
     }
 
     private fun isHostPage(uri: Uri?) =
