@@ -17,6 +17,11 @@ interface CaptionNativeApi {
   startSystem?(): void;
   /** 폰 내장 인식을 맡는 서비스와 그 앱의 인터넷 권한 (JSON). 예전 앱에는 없다. */
   systemInfo?(): string;
+  /** 같은 와이파이(핫스팟) 송출 서버: 열기·주소 다시 읽기 ({port, addresses} JSON), 보내기, 닫기. 예전 앱에는 없다. */
+  lanStart?(): string;
+  lanInfo?(): string;
+  lanSend?(id: number, data: string): void;
+  lanStop?(): void;
   /** 폰 내장 인식에 미리 알려 줄 용어 (JSON 배열). 예전 앱에는 없다. */
   setBiasing?(json: string): void;
 }
@@ -34,7 +39,17 @@ type NativeEvent =
   | { op: 'paused' }
   | { op: 'resumed'; gapMs: number }
   | { op: 'decode'; ms: number; audioMs: number }
-  | { op: 'rx'; seconds: number; peak: number; speech: number; gain: number };
+  | { op: 'rx'; seconds: number; peak: number; speech: number; gain: number }
+  /** 같은 와이파이로 들어온 참석자 연결 (LocalServer) */
+  | { op: 'lanOpen'; id: number }
+  | { op: 'lanMsg'; id: number; data: string }
+  | { op: 'lanClose'; id: number };
+
+/** 앱이 보내는 알림 받기 (끄는 함수를 돌려준다) */
+export function onNativeEvent(l: (m: NativeEvent) => void): () => void {
+  listeners.add(l);
+  return () => listeners.delete(l);
+}
 
 declare global {
   interface Window {
@@ -95,7 +110,8 @@ if (nativeApp) {
         const pct = Math.floor((m.loaded / m.total) * 10) * 10;
         if (pct !== lastPct) dlog(`모델 받기 ${(lastPct = pct)}%`);
       } else if (m.op === 'rx') dlog(`앱이 받은 소리: ${m.seconds.toFixed(1)}초, 최대 ${m.peak.toFixed(2)}, 말소리 감지 ${m.speech.toFixed(1)}초, 증폭 x${m.gain.toFixed(1)}`);
-      else if (m.op !== 'result' && m.op !== 'decode' && m.op !== 'paused' && m.op !== 'resumed') dlog(`앱: ${m.op}${'message' in m ? ` ${m.message}` : ''}`);
+      else if (m.op === 'lanOpen' || m.op === 'lanClose') dlog(`같은 와이파이 참석자 ${m.op === 'lanOpen' ? '접속' : '나감'} #${m.id}`);
+      else if (m.op !== 'result' && m.op !== 'decode' && m.op !== 'paused' && m.op !== 'resumed' && m.op !== 'lanMsg') dlog(`앱: ${m.op}${'message' in m ? ` ${m.message}` : ''}`);
       listeners.forEach((l) => l(m));
     },
   };

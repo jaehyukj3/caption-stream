@@ -22,6 +22,7 @@ import DictionaryEditor from './DictionaryEditor.vue';
 import MicControls, { type MicState } from './MicControls.vue';
 import SessionLogPanel from './SessionLogPanel.vue';
 import SessionPanel from './SessionPanel.vue';
+import { useNativeLan } from '../../composables/useNativeLan';
 
 const build = __BUILD__;
 /** 진단: 엔진으로 실제 들어간 최근 10초 소리를 파일로 (소리가 깨끗한지 들어 보기) */
@@ -74,6 +75,8 @@ room.addPeer(
 );
 // 참석자는 이 사이트의 중계 서버를 거쳐 접속한다 (내용은 이 탭에서 암호화)
 const bridge = new RelayBridge(location.origin, room, directory);
+// 안드로이드 앱: 인터넷 없이 같은 와이파이(이 폰의 핫스팟)로도 받는다
+const lan = useNativeLan(room);
 
 const dict = useDictionary();
 const { prefs, biggerFont, smallerFont } = usePreferences(26);
@@ -271,7 +274,7 @@ onBeforeUnmount(() => {
         <button type="button" class="btn btn-primary" @click="emit('newSession')">새 세션 만들기</button>
       </div>
 
-      <SessionPanel :code="code" :share="share" :lan="false" />
+      <SessionPanel :code="code" :share="share" :lan="false" :hotspot="lan.available && !lan.closed.value ? lan.origins.value : undefined" />
 
       <div class="tools">
         <button type="button" class="btn" :disabled="!store.state.lines.length" @click="downloadCaptions(store.state.lines, code)">⤓ 자막 저장(.txt)</button>

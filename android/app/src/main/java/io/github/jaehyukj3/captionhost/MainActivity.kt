@@ -53,6 +53,21 @@ class MainActivity : Activity() {
     /** 모델 준비·마이크 켜고 끄기는 차례대로 (인식 자체는 SpeechEngine의 스레드에서) */
     private val worker = Executors.newSingleThreadExecutor()
     @Volatile private var preparing = false
+    /** 인터넷 없이 같은 와이파이(이 폰의 핫스팟)로 참석자를 받는 서버. 화면이 열어 달라고 할 때 연다 */
+    private val lan by lazy {
+        LocalServer(
+            asset = { path ->
+                try {
+                    assets.open("site/$path").use { it.readBytes() }
+                } catch (_: java.io.IOException) {
+                    null
+                }
+            },
+            onOpen = { id -> emit(SpeechEngine.event("lanOpen").put("id", id)) },
+            onMessage = { id, data -> emit(SpeechEngine.event("lanMsg").put("id", id).put("data", data)) },
+            onClose = { id -> emit(SpeechEngine.event("lanClose").put("id", id)) },
+        )
+    }
     /** 사이트에 닿지 않아(인터넷 없음·차단) 앱에 넣어 둔 화면 파일로 여는 중 */
     @Volatile private var offline = false
 
@@ -96,6 +111,8 @@ class MainActivity : Activity() {
                 // 화면을 새로 열면(새로고침 등) 이전 화면이 켜 둔 마이크는 끈다
                 worker.execute { engine.stop() }
                 system?.stop {}
+                // 새 화면은 새 방이므로 이전 방의 참석자 연결은 끊는다
+                lan.dropAll()
             }
         }
         web.webChromeClient = object : WebChromeClient() {
@@ -126,6 +143,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        lan.stop()
         system?.stop {}
         worker.execute { engine.stop() }
         worker.shutdown()
@@ -338,6 +356,29 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun systemAvailable(): Boolean = system?.isAvailable == true
+
+        /** 같은 와이파이(핫스팟) 서버를 열고 주소를 알려 준다: {port, addresses} */
+        @JavascriptInterface
+        fun lanStart(): String {
+            val port = try {
+                lan.start()
+            } catch (_: Exception) {
+                0
+            }
+            return lanInfoJson(port)
+        }
+
+        /** 주소 다시 읽기 (핫스팟을 나중에 켠 경우) */
+        @JavascriptInterface
+        fun lanInfo(): String = lanInfoJson(if (lan.isRunning) lan.port else 0)
+
+        @JavascriptInterface
+        fun lanSend(id: Int, data: String) = lan.send(id, data)
+
+        @JavascriptInterface
+        fun lanStop() = lan.stop()
+
+        private fun lanInfoJson(port: Int) = JSONObject().put("port", port).put("addresses", org.json.JSONArray(LocalServer.addresses())).toString()
 
         /** 기기 안 인식 서비스 정보 (JSON, SystemSpeechEngine.serviceInfo) */
         @JavascriptInterface

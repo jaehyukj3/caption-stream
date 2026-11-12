@@ -9,8 +9,10 @@ const props = withDefaults(
     share: ShareMessage | null;
     /** 같은 와이파이 접속을 지원하는지 (웹 송출은 노트북 서버가 없어 인터넷 주소만) */
     lan?: boolean;
+    /** 안드로이드 앱의 같은 와이파이(핫스팟) 주소들. 앱이 아니면 undefined */
+    hotspot?: string[];
   }>(),
-  { lan: true },
+  { lan: true, hotspot: undefined },
 );
 
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
@@ -36,6 +38,7 @@ const qrLarge = ref(false);
 const copied = ref(false);
 
 const lanOrigins = computed<string[]>(() => {
+  if (props.hotspot) return props.hotspot;
   if (!props.lan) return [];
   const info = net.value;
   if (!info) return LOCAL_HOSTS.includes(location.hostname) ? [] : [location.origin];
@@ -54,13 +57,20 @@ const targets = computed<Target[]>(() => {
   const list: Target[] = [];
   if (props.share?.relayViewerUrl) list.push({ key: 'relay', label: '인터넷(LTE) — 추천', url: props.share.relayViewerUrl });
   for (const o of lanOrigins.value) {
-    list.push({ key: o, label: `같은 와이파이 (${new URL(o).hostname})`, url: `${o}/view/${props.code}` });
+    list.push({ key: o, label: `${props.hotspot ? '같은 와이파이·핫스팟' : '같은 와이파이'} (${new URL(o).hostname})`, url: `${o}/view/${props.code}` });
   }
   return list;
 });
 
 /** 중계 연결을 기다리는 중 (이때 와이파이 주소로 넘어가 버리면 매번 방화벽 창이 뜬다) */
-const waitingRelay = computed(() => !props.share || (props.share.relay === 'connecting' && !props.share.relayViewerUrl));
+// 한 번이라도 실패했으면(인터넷 없음) 다시 연결을 시도하는 동안 기다리지 않는다 (QR이 사라졌다 나타났다 하지 않게)
+const relayFailed = ref(false);
+watch(
+  () => props.share?.relay,
+  (r) => r === 'offline' && (relayFailed.value = true),
+  { immediate: true },
+);
+const waitingRelay = computed(() => !relayFailed.value && (!props.share || (props.share.relay === 'connecting' && !props.share.relayViewerUrl)));
 
 // 중계가 연결되면 인터넷 주소를, 안 되면 와이파이 주소를 보여 준다 (직접 고른 경우는 유지)
 let userPicked = false;
@@ -69,7 +79,8 @@ watch(
   ([list, waiting]) => {
     const current = list.find((t) => t.key === selectedKey.value);
     if (current && userPicked) return;
-    if (waiting && !list.some((t) => t.key === 'relay')) {
+    // (앱의 핫스팟 주소는 방화벽 창이 없으므로 기다리지 않고 바로 보여 준다)
+    if (waiting && !props.hotspot?.length && !list.some((t) => t.key === 'relay')) {
       selectedKey.value = '';
       return;
     }
@@ -111,9 +122,13 @@ const relayLabel = computed(
       off: null,
       connecting: '인터넷(LTE) 접속 준비 중…',
       online: null,
-      offline: props.lan
-        ? '인터넷(LTE) 접속 끊김 — 다시 연결하는 중. 지금은 같은 와이파이로만 접속됩니다.'
-        : '인터넷 연결이 끊겨 다시 연결하는 중입니다.',
+      offline: props.hotspot
+        ? props.hotspot.length
+          ? '인터넷 없음 — 지금은 같은 와이파이(이 폰 핫스팟)로만 접속됩니다.'
+          : '인터넷 없음 — 이 폰의 핫스팟을 켜면 참석자가 그 와이파이로 접속할 수 있습니다.'
+        : props.lan
+          ? '인터넷(LTE) 접속 끊김 — 다시 연결하는 중. 지금은 같은 와이파이로만 접속됩니다. 인터넷이 아예 없으면 휴대폰 핫스팟을 켜고 노트북과 참석자 모두 그 와이파이에 접속하세요.'
+          : '인터넷 연결이 끊겨 다시 연결하는 중입니다.',
     })[props.share?.relay ?? 'off'],
 );
 
@@ -171,6 +186,7 @@ async function copy() {
       </div>
     </div>
     <p v-if="relayLabel" class="notice relay-note">{{ relayLabel }}</p>
+    <p v-if="hotspot && isLanTarget" class="notice">참석자는 먼저 이 폰과 같은 와이파이(이 폰의 핫스팟)에 접속한 뒤 QR을 찍습니다. 인터넷은 필요 없습니다.</p>
     <p v-if="lanOpening" class="notice">같은 와이파이 접속을 여는 중입니다. Windows 보안 경고가 뜨면 [액세스 허용]을 눌러 주세요.</p>
     <p v-if="lanError" class="notice is-error">{{ lanError }}</p>
     <p v-if="isLocalOnly" class="notice">

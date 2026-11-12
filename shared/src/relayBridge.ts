@@ -85,7 +85,7 @@ export class RelayBridge {
       }
       this.onRelayMessage(msg);
     };
-    ws.onclose = () => {
+    const down = () => {
       clearTimeout(handshakeTimer);
       if (this.ws !== ws) return;
       this.ws = null;
@@ -96,8 +96,19 @@ export class RelayBridge {
       const delay = Math.min(1000 * 2 ** this.attempt++, MAX_BACKOFF_MS);
       this.retryTimer = setTimeout(() => this.connect(), delay);
     };
+    ws.onclose = down;
     ws.onerror = () => {
       if (this.attempt === 0) console.warn('[relay] 중계 서버에 연결하지 못했습니다 (인터넷 연결 확인)');
+      // Node.js(22)의 WebSocket은 연결에 실패하면 error만 내고 close는 내지 않는다 → 바로 끊김으로 처리
+      // (안 그러면 인터넷이 없을 때 10초마다 '연결 중'에 머물러 같은 와이파이 QR이 숨는다)
+      if (ws.readyState !== WebSocket.OPEN) {
+        down();
+        try {
+          ws.close();
+        } catch {
+          /* 이미 닫힘 */
+        }
+      }
     };
   }
 
