@@ -7,6 +7,12 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- 기기 안 음성인식 서비스(갤럭시·구글은 Android System Intelligence)의 권한을 확인하려면 그 앱이 보여야 한다 -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="false"

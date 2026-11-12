@@ -15,6 +15,8 @@ interface CaptionNativeApi {
   systemAvailable?(): boolean;
   prepareSystem?(): void;
   startSystem?(): void;
+  /** 폰 내장 인식을 맡는 서비스와 그 앱의 인터넷 권한 (JSON). 예전 앱에는 없다. */
+  systemInfo?(): string;
   /** 폰 내장 인식에 미리 알려 줄 용어 (JSON 배열). 예전 앱에는 없다. */
   setBiasing?(json: string): void;
 }
@@ -64,6 +66,27 @@ export const nativeSystemAvailable = (): boolean => {
   }
 };
 
+/** 폰 내장 인식을 실제로 맡는 서비스 (운영체제가 연결하는 바로 그 앱) */
+export interface NativeSystemInfo {
+  component?: string;
+  package?: string;
+  label?: string;
+  version?: string;
+  system?: boolean;
+  /** 그 앱이 인터넷에 접속할 수 있는지. false면 운영체제가 막아 음성이 폰 밖으로 나갈 수 없다 */
+  internet?: boolean;
+  installed?: boolean;
+}
+
+export const nativeSystemInfo = (): NativeSystemInfo | null => {
+  try {
+    const s = nativeApp?.systemInfo?.();
+    return s ? (JSON.parse(s) as NativeSystemInfo) : null;
+  } catch {
+    return null;
+  }
+};
+
 if (nativeApp) {
   let lastPct = -1;
   window.__captionNative = {
@@ -106,7 +129,11 @@ export class NativeSttProvider implements SttProvider {
           }
         };
         listeners.add(l);
-        if (mode === 'system') nativeApp!.prepareSystem!();
+        if (mode === 'system') {
+          const info = nativeSystemInfo();
+          if (info) dlog(`폰 인식 서비스: ${info.component || '(없음)'} ${info.version ?? ''}, 인터넷 권한 ${info.internet === undefined ? '알 수 없음' : info.internet ? '있음' : '없음'}`);
+          nativeApp!.prepareSystem!();
+        }
         else nativeApp!.prepare();
       });
     }

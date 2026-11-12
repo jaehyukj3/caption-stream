@@ -15,7 +15,7 @@ import { createSttProvider } from '../../stt';
 import { micErrorMessage, pcmToWav } from '../../stt/micCapture';
 import { debugLines, dlog } from '../../utils/debugLog';
 import { OnDeviceSttProvider, type ModelPhase } from '../../stt/OnDeviceSttProvider';
-import { NativeSttProvider } from '../../stt/NativeSttProvider';
+import { NativeSttProvider, nativeSystemInfo } from '../../stt/NativeSttProvider';
 import { downloadCaptions, saveBlob, stamp } from '../../utils/download';
 import CaptionView from '../caption/CaptionView.vue';
 import DictionaryEditor from './DictionaryEditor.vue';
@@ -110,7 +110,7 @@ function prepareModel() {
 if (onDevice) prepareModel();
 
 // 테스트 기록: 이 탭이 곧 방이라 통계를 바로 읽는다
-const sessionLog = useSessionLog({ code, mode: 'web', engine: { webspeech: 'webspeech', ondevice: 'sensevoice-wasm', native: 'sensevoice-android', nativeSystem: 'android-system' }[props.engine] });
+const sessionLog = useSessionLog({ code, mode: 'web', engine: { webspeech: 'webspeech', ondevice: 'sensevoice-wasm', native: 'sensevoice-android', nativeSystem: 'android-system' }[props.engine], recognizer: props.engine === 'nativeSystem' ? nativeSystemInfo() ?? undefined : undefined });
 stt.onDiag?.(sessionLog.stt);
 watch(micState, (s) => sessionLog.mic(s));
 const stats = ref<RoomStats>(room.getStats());

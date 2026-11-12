@@ -17,7 +17,7 @@ const BRIEF_VIEW_MS = 60_000;
  * 테스트 기록: 마이크 상태·음성인식 끊김을 모아 두었다가 방 이용 통계·자막과 함께 파일로 저장한다.
  * 모두 송출 화면 메모리에만 있고, 송출자가 저장 버튼을 누를 때만 파일이 된다.
  */
-export function useSessionLog(meta: { code: string; mode: 'laptop' | 'web'; engine: string }) {
+export function useSessionLog(meta: { code: string; mode: 'laptop' | 'web'; engine: string; /** 폰 내장 인식을 맡은 서비스와 그 인터넷 권한 */ recognizer?: unknown }) {
   const events = shallowRef<LogEvent[]>([]);
   const push = (e: Omit<LogEvent, 't'>) => (events.value = [...events.value, { t: Date.now(), ...e }]);
 

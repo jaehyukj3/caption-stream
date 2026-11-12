@@ -283,6 +283,10 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun systemAvailable(): Boolean = system?.isAvailable == true
 
+        /** 기기 안 인식 서비스 정보 (JSON, SystemSpeechEngine.serviceInfo) */
+        @JavascriptInterface
+        fun systemInfo(): String = system?.serviceInfo()?.toString() ?: "{}"
+
         @JavascriptInterface
         fun prepareSystem() {
             system?.prepare() ?: emit(SpeechEngine.event("error").put("where", "prepare").put("message", "이 폰은 기기 안 음성인식을 지원하지 않습니다 (안드로이드 12 이상 필요)."))

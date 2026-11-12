@@ -1,6 +1,10 @@
 package io.github.jaehyukj3.captionhost
 
+import android.Manifest
+import android.content.ComponentName
 import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -37,6 +41,36 @@ class SystemSpeechEngine private constructor(private val context: Context, priva
 
     val isAvailable: Boolean
         get() = SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+
+    /**
+     * 기기 안 인식을 실제로 맡는 서비스와, 그 앱이 인터넷에 접속할 수 있는지.
+     * createOnDeviceSpeechRecognizer는 제조사가 정해 둔 서비스(config_defaultOnDeviceSpeechRecognitionService) 하나에만 연결한다
+     * (사용자가 고른 인식기·클라우드로 넘기는 경로 없음, AOSP SpeechRecognitionManagerServiceImpl).
+     * 그 앱에 인터넷 권한이 없으면 운영체제가 네트워크를 막으므로 음성이 폰 밖으로 나갈 수 없다.
+     * 갤럭시·픽셀은 Android System Intelligence(com.google.android.as)이고 인터넷 권한이 없다 (Private Compute Core).
+     */
+    fun serviceInfo(): JSONObject {
+        val o = JSONObject()
+        val id = context.resources.getIdentifier("config_defaultOnDeviceSpeechRecognitionService", "string", "android")
+        val name = if (id != 0) context.getString(id) else ""
+        o.put("component", name)
+        val cn = ComponentName.unflattenFromString(name) ?: return o
+        val pm = context.packageManager
+        try {
+            val info = pm.getPackageInfo(cn.packageName, PackageManager.GET_PERMISSIONS)
+            val app = info.applicationInfo
+            o.put("package", cn.packageName)
+            o.put("label", app?.let { pm.getApplicationLabel(it).toString() } ?: cn.packageName)
+            o.put("version", info.versionName ?: "")
+            o.put("system", app != null && (app.flags and ApplicationInfo.FLAG_SYSTEM) != 0)
+            // 같은 사용자 ID를 나눠 쓰는 앱의 권한까지 들어간 실제 허용 여부
+            o.put("internet", pm.checkPermission(Manifest.permission.INTERNET, cn.packageName) == PackageManager.PERMISSION_GRANTED)
+            o.put("internetRequested", info.requestedPermissions?.contains(Manifest.permission.INTERNET) == true)
+        } catch (_: PackageManager.NameNotFoundException) {
+            o.put("installed", false)
+        }
+        return o
+    }
 
     /** 이 강의의 용어: 인식기가 그 낱말 쪽으로 알아듣도록 미리 알려 준다 (안드로이드 13 이상, 지원하는 인식기만) */
     private var biasing: ArrayList<String> = arrayListOf()

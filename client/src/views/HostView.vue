@@ -6,7 +6,7 @@ import WebHostConsole from '../components/host/WebHostConsole.vue';
 import { usePreferences } from '../composables/usePreferences';
 import { useUpdateCheck } from '../composables/useUpdateCheck';
 import { createSttProvider, sttKindFromUrl } from '../stt';
-import { nativeApp, nativeSystemAvailable } from '../stt/NativeSttProvider';
+import { nativeApp, nativeSystemAvailable, nativeSystemInfo } from '../stt/NativeSttProvider';
 import { readJson, writeJson } from '../utils/storage';
 
 /** 탭을 새로고침해도 같은 방을 이어서 송출할 수 있도록 탭 단위로 보관 */
@@ -31,6 +31,8 @@ const WEB_ENGINE_KEY = 'caption.webEngine';
 /** 안드로이드 앱 안: 폰 내장 기기 안 음성인식(더 정확) 또는 앱 안 모델. 고른 것은 따로 기억한다 */
 const APP_ENGINE_KEY = 'caption.appEngine';
 const systemAvailable = nativeSystemAvailable();
+/** 이 폰에서 내장 인식을 맡는 앱과 그 앱의 인터넷 권한 (직접 확인한 결과를 보여 준다) */
+const systemInfo = systemAvailable ? nativeSystemInfo() : null;
 const appDefault = systemAvailable ? 'nativeSystem' : 'native';
 const savedApp = readJson<string>(localStorage, APP_ENGINE_KEY, appDefault);
 const webEngine = ref<'webspeech' | 'ondevice' | 'native' | 'nativeSystem'>(
@@ -150,6 +152,10 @@ function onInvalid() {
               <b>폰 내장 음성인식 (권장)</b>
               <small>자막: 이 폰에 들어 있는 음성인식(갤럭시·구글)이 만듦<br />음성 데이터: <b>외부로 안 나감</b></small>
               <small>더 정확하고 받을 것이 없습니다. 한국어 오프라인 언어팩이 필요할 수 있습니다.</small>
+              <small v-if="systemInfo?.internet !== undefined" class="verify" :class="{ warn: systemInfo.internet }">
+                이 폰에서 확인: 인식 앱 {{ systemInfo.label }} —
+                {{ systemInfo.internet ? '인터넷 권한 있음' : '인터넷 권한 없음 (음성이 밖으로 나갈 수 없음)' }}
+              </small>
             </span>
           </label>
           <label class="engine" :class="{ on: webEngine === 'native' }">
@@ -302,6 +308,12 @@ function onInvalid() {
 }
 .engine small b {
   color: var(--text);
+}
+.engine small.verify {
+  color: var(--ok, #1a7f37);
+}
+.engine small.verify.warn {
+  color: var(--danger, #c62828);
 }
 .engine-note {
   margin: 0 0 8px;

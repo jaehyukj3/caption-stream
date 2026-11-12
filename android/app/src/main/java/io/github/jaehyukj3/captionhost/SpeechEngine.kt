@@ -315,8 +315,13 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             while (n < fresh.size && n < prev.size && fresh[n].key == prev[n].key && fresh[n].end < clock - LOCK_GUARD_SEC) n++
             for (i in 0 until n) lockWord(fresh[i])
             val rest = fresh.subList(n, fresh.size)
+            // 화면에는 고정된 낱말 + 지난번 인식과도 같게 나온 뒷부분만 보인다 (이번에 처음 나온 낱말은 다음 인식에서 같으면 보임).
+            // 새로 나온 끝 낱말은 다음 인식에서 자주 바뀌어, 보였다가 지워지는 일이 잦다 (강당 3분: 분당 62번 → 1번, 글자가 보이는 때는 약 0.5초 늦어짐)
+            val prevRest = prev.drop(n)
+            var agreed = 0
+            while (agreed < rest.size && agreed < prevRest.size && rest[agreed].key == prevRest[agreed].key) agreed++
             prev = rest
-            sendInterim(joinWords(locked + rest))
+            sendInterim(joinWords(locked + rest.subList(0, agreed)))
 
             // 줄 확정: 고정된 낱말이 문장 끝이면 거기서, 고정 글자가 많거나 줄이 너무 길면 지금까지
             val si = locked.indexOfFirst { it.endsSentence }
@@ -440,7 +445,7 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
         private const val PREROLL_SAMPLES = SAMPLE_RATE * 3 / 10
         /** 이보다 짧은 말소리 구간은 중간 결과를 내지 않는다 */
         private const val MIN_INTERIM_SAMPLES = SAMPLE_RATE / 2
-        private const val MIN_INTERIM_INTERVAL_MS = 700L
+        private const val MIN_INTERIM_INTERVAL_MS = 500L
 
         fun event(op: String): JSONObject = JSONObject().put("op", op)
 
