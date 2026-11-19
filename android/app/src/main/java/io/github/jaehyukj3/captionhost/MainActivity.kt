@@ -92,11 +92,13 @@ class MainActivity : Activity() {
                 return true
             }
 
-            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+            // 웹뷰의 다른 스레드에서 불린다. 여기서 예외가 나면 앱이 통째로 꺼지므로 무슨 일이 있어도 null(평소대로)로 넘긴다
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = try {
                 val u = request.url
-                if (request.method != "GET" || u.host != site.host) return null
-                if (!offline && hasInternet()) return null
-                return bundled(u.path ?: "/") // 넣어 둔 파일이 없으면(중계 연결 등) 그대로 네트워크로
+                if (request.method != "GET" || u.host != site.host || (!offline && hasInternet())) null
+                else bundled(u.path ?: "/") // 넣어 둔 파일이 없으면(중계 연결 등) 그대로 네트워크로
+            } catch (_: Exception) {
+                null
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -152,10 +154,12 @@ class MainActivity : Activity() {
     }
 
     /** 실제로 인터넷이 되는지 (와이파이에 붙어 있어도 인터넷이 없는 핫스팟이면 false) */
-    private fun hasInternet(): Boolean {
-        val cm = getSystemService(ConnectivityManager::class.java) ?: return false
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    private fun hasInternet(): Boolean = try {
+        val cm = getSystemService(ConnectivityManager::class.java)
+        val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+        caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+    } catch (_: SecurityException) {
+        true // 확인할 수 없으면 평소처럼 사이트에서 연다 (못 열면 onReceivedError가 넣어 둔 화면으로 바꾼다)
     }
 
     /** 앱에 넣어 둔 화면 파일. /host 등 화면 주소는 index.html, 나머지는 같은 경로의 파일 */

@@ -42,6 +42,11 @@ android {
 
     buildFeatures { buildConfig = true }
 
+    // 권한 없이 부르면 앱이 꺼지는 호출(MissingPermission)은 빌드를 실패시킨다 (출시 빌드 때 도는 lintVital 검사)
+    lint {
+        fatal += "MissingPermission"
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
