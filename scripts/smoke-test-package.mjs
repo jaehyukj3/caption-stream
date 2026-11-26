@@ -16,7 +16,9 @@ if (pkg.endsWith('.zip')) {
   const dest = mkdtempSync(join(tmpdir(), 'smoke-'));
   const r =
     process.platform === 'win32'
-      ? spawnSync('powershell', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${pkg}' -DestinationPath '${dest}' -Force`], { encoding: 'utf8' })
+      ? // GitHub의 Windows 실행 환경(2026-11~)에서 옛 PowerShell 5.1의 Expand-Archive가 고장 나
+        // ("Cannot find an overload for ExtractToDirectory") 성공이라 하면서 아무것도 풀지 않는다 → PowerShell 7(pwsh)로 푼다
+        spawnSync('pwsh', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${pkg}' -DestinationPath '${dest}' -Force`], { encoding: 'utf8' })
       : spawnSync('unzip', ['-q', pkg, '-d', dest], { encoding: 'utf8' });
   if (r.status !== 0) {
     annotate('unzip', `${r.stderr}${r.stdout}`);
