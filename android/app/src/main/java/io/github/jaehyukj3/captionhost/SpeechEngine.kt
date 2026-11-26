@@ -62,8 +62,8 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             config = VadModelConfig(
                 sileroVadModelConfig = SileroVadModelConfig(
                     model = model.vad,
-                    // 휴대폰 마이크 소리는 말 사이에도 잡음이 깔려 0.5에서는 짧은 조각만 잡힌다 (웹 기기 안 인식과 같은 값)
-                    threshold = 0.35f,
+                    // VAD는 줄을 끝낼 때만 쓰고 소리는 버리지 않으므로 노트북·웹과 같은 0.5 (잡음 섞은 낭독: 0.35보다 정확)
+                    threshold = 0.5f,
                     minSilenceDuration = 0.4f, // 0.4초 쉬면 문장 확정 (0.5와 정확도 같고 0.1초 빠름)
                     minSpeechDuration = 0.25f,
                     windowSize = VAD_WINDOW,
@@ -231,21 +231,21 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
      * 고정된 낱말이 문장 끝이거나 40자를 넘거나 줄이 15초를 넘으면 그 줄을 확정한다.
      * 강당 녹음·낭독 시험(정답 대비): 정확도는 비슷하고, 글자가 더 바뀌지 않게 되기까지 2.7초 → 1.3초,
      * 확정할 때 이미 보이던 글자가 바뀌는 일 24번(3분) → 0번.
+     * 소리는 VAD와 상관없이 모두 모으고 VAD는 줄 끝에만 쓴다 (잡음 섞은 낭독: 글자 오류 50% → 20~27%).
      */
     private val session = object {
         var pending = FloatArray(0)
-        val preroll = ArrayDeque<FloatArray>()
-        var prerollLen = 0
         /** 지금 줄의 소리와 그 시작 시각(초) */
         val line = ArrayList<FloatArray>()
         var lineLen = 0
         var lineStart = 0.0
         /** 지금까지 받은 소리 길이(초) */
         var clock = 0.0
+        /** VAD가 지금 말하는 중이라고 보는지 (줄 끝을 정할 때만 쓴다) */
         var speaking = false
         /** 고정된 낱말 (다시 바뀌지 않음) */
         val locked = ArrayList<Word>()
-        /** 마지막으로 고정한 낱말: 다음 인식 결과에서 '고정한 부분 다음'을 찾는 기준 */
+        /** 마지막으로 고정(또는 확정)한 낱말: 다음 인식 결과에서 '이미 쓴 부분 다음'을 찾는 기준 */
         var anchor: Word? = null
         /** 지난 인식에서 고정되지 않은 낱말 (이번 인식과 같으면 고정) */
         var prev: List<Word> = emptyList()
@@ -263,27 +263,16 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             pending = buf.copyOfRange(o, buf.size)
             while (!vad.empty()) vad.pop() // 구간은 쓰지 않고 말하는 중인지만 본다
 
-            val detected = vad.isSpeechDetected()
-            if (detected && !speaking) {
-                line.clear(); line.addAll(preroll)
-                lineLen = prerollLen
-                lineStart = clock - prerollLen.toDouble() / SAMPLE_RATE
-                resetLocks()
-            }
-            if (detected || speaking) {
-                line.add(samples)
-                lineLen += samples.size
-            }
+            // 소리는 VAD와 상관없이 모두 줄에 모은다 (잡음 속에서는 VAD가 말소리의 절반쯤을 놓친다)
+            if (lineLen == 0) lineStart = clock
+            line.add(samples)
+            lineLen += samples.size
             clock += samples.size.toDouble() / SAMPLE_RATE
-            remember(samples)
 
-            if (!detected && speaking) {
-                speaking = false
-                endLine()
-                return
-            }
+            val detected = vad.isSpeechDetected()
+            val ended = speaking && !detected
             speaking = detected
-            if (speaking) maybeInterim()
+            if (ended) endLine() else maybeInterim()
         }
 
         fun flush(vad: Vad) {
@@ -298,8 +287,6 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             resetLocks()
             speaking = false
             pending = FloatArray(0)
-            preroll.clear()
-            prerollLen = 0
         }
 
         fun maybeInterim() {
@@ -323,37 +310,58 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             prev = rest
             sendInterim(joinWords(locked + rest.subList(0, agreed)))
 
-            // 줄 확정: 고정된 낱말이 문장 끝이면 거기서, 고정 글자가 많거나 줄이 너무 길면 지금까지
+            val all = locked + rest
+            // 낱말이 안 나오는 소리(쉼·잡음)는 1초만 남기고 버린다
+            if (all.isEmpty()) {
+                if (clock - lineStart > 2) cutLine(clock - 1)
+                return
+            }
+            // VAD가 말 끝을 못 잡아도(잡음) 새 낱말이 한동안 없으면 줄을 확정한다
+            val last = all.last()
+            if (last.end < clock - END_GAP_SEC) {
+                finishLine(all, last.end + 0.05)
+                return
+            }
+
+            // 줄 확정: 고정된 낱말이 문장 끝이면 거기서, 고정 글자가 많거나 줄이 너무 길면 지금까지.
+            // 뒤따르는 낱말이 아직 안 나왔으면 '지금'이 아니라 마지막 확정 낱말 끝에서 자른다 (막 시작한 다음 낱말 앞부분을 버리지 않게)
             val si = locked.indexOfFirst { it.endsSentence }
             if (si >= 0) {
                 val carry = locked.subList(si + 1, locked.size).toList()
-                finishLine(locked.subList(0, si + 1).toList(), carry.firstOrNull()?.start ?: rest.firstOrNull()?.start ?: clock)
+                finishLine(locked.subList(0, si + 1).toList(), carry.firstOrNull()?.start ?: rest.firstOrNull()?.start ?: (locked[si].end + 0.05))
                 for (w in carry) lockWord(w)
             } else if (locked.sumOf { it.text.length } >= MAX_LINE_CHARS) {
-                finishLine(locked.toList(), rest.firstOrNull()?.start ?: clock)
+                finishLine(locked.toList(), rest.firstOrNull()?.start ?: (locked.last().end + 0.05))
             } else if (lineLen.toDouble() / SAMPLE_RATE > MAX_LINE_SEC && rest.size > 1) {
                 finishLine(locked + rest.subList(0, rest.size - 1), rest.last().start)
             }
         }
 
-        /** 말이 끝났을 때: 고정되지 않은 뒷부분만 다시 받아 적어 붙여 확정 */
+        /** 말이 끝났을 때(VAD): 고정되지 않은 뒷부분만 다시 받아 적어 붙여 확정. 소리는 버리지 않고 이어서 모은다 */
         fun endLine() {
-            val tail = afterLocked(transcribeWords(concat(line), lineStart))
-            emitFinal(joinWords(locked + tail))
-            line.clear()
-            lineLen = 0
+            val ws = locked + afterLocked(transcribeWords(concat(line), lineStart))
+            emitFinal(joinWords(ws))
+            val last = ws.lastOrNull()
+            val keepFrom = clock - PREROLL_SEC
+            cutLine(max(lineStart, if (last != null) kotlin.math.min(keepFrom, last.end + 0.05) else keepFrom))
             resetLocks()
+            if (last != null) anchor = last // 남긴 소리에서 방금 확정한 낱말이 다시 나오면 건너뛴다
         }
 
         /** 낱말들을 한 줄로 확정하고, cutSec 앞의 소리를 버려 다음 줄을 시작한다 */
         fun finishLine(words: List<Word>, cutSec: Double) {
             emitFinal(joinWords(words))
+            cutLine(cutSec - 0.02)
+            resetLocks()
+        }
+
+        /** 줄의 소리에서 sec(초) 앞부분을 버린다 */
+        fun cutLine(sec: Double) {
             val all = concat(line)
-            val cut = Math.round((cutSec - 0.02 - lineStart) * SAMPLE_RATE).toInt().coerceIn(0, all.size)
+            val cut = Math.round((sec - lineStart) * SAMPLE_RATE).toInt().coerceIn(0, all.size)
             line.clear(); line.add(all.copyOfRange(cut, all.size))
             lineLen = all.size - cut
             lineStart += cut.toDouble() / SAMPLE_RATE
-            resetLocks()
         }
 
         fun emitFinal(text: String) {
@@ -373,7 +381,7 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
             lastInterimAt = 0
         }
 
-        /** 인식 결과에서 이미 고정한 부분 다음만 고른다: 마지막 고정 낱말을 글자로 찾고(±0.5초), 못 찾으면 시각으로 */
+        /** 인식 결과에서 이미 쓴 부분 다음만 고른다: 마지막 고정 낱말을 글자로 찾고(±0.5초), 못 찾으면 시각으로 */
         fun afterLocked(ws: List<Word>): List<Word> {
             val a = anchor ?: return ws
             var best = -1
@@ -386,20 +394,21 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
                 }
             }
             if (best >= 0) return ws.subList(best + 1, ws.size)
-            // 고정 낱말이 둘로 나뉘어 다시 나온 경우("다리를" → "다리" + "를")도 건너뜀
-            return ws.filter { it.start > a.end - 0.05 }
+            // 고정 낱말이 둘로 나뉘어 다시 나온 경우("다리를" → "다리" + "를")는 건너뛰고,
+            // 고정 낱말에 뒷말이 붙어 나온 경우("문화" → "문화충격보다")는 붙은 뒷말만 살린다
+            val ak = a.key
+            val out = ArrayList<Word>()
+            for (w in ws) {
+                if (w.start > a.end - 0.05) out.add(w)
+                else if (w.key.length > ak.length && w.key.startsWith(ak)) out.add(Word(w.text.substring(ak.length), a.end, w.end))
+            }
+            return out
         }
 
         fun sendInterim(text: String) {
             if (text.isEmpty() || text == lastInterim) return
             lastInterim = text
             emit(event("result").put("kind", "interim").put("text", text))
-        }
-
-        fun remember(samples: FloatArray) {
-            preroll.addLast(samples)
-            prerollLen += samples.size
-            while (prerollLen - preroll.first().size >= PREROLL_SAMPLES) prerollLen -= preroll.removeFirst().size
         }
     }
 
@@ -441,8 +450,10 @@ class SpeechEngine(private val emit: (JSONObject) -> Unit) {
     companion object {
         const val SAMPLE_RATE = 16000
         private const val VAD_WINDOW = 512
-        /** 말 시작 직전 소리도 포함 (첫 음절 잘림 방지) */
-        private const val PREROLL_SAMPLES = SAMPLE_RATE * 3 / 10
+        /** 말이 끝나 줄을 확정할 때 남겨 두는 끝부분 (다음 말의 첫 음절 잘림 방지) */
+        private const val PREROLL_SEC = 0.3
+        /** 새 낱말이 이만큼 안 나오면 말이 끝난 것으로 보고 줄을 확정한다 (잡음으로 VAD가 말 끝을 못 잡을 때) */
+        private const val END_GAP_SEC = 1.2
         /** 이보다 짧은 말소리 구간은 중간 결과를 내지 않는다 */
         private const val MIN_INTERIM_SAMPLES = SAMPLE_RATE / 2
         private const val MIN_INTERIM_INTERVAL_MS = 500L
