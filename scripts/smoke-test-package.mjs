@@ -1,7 +1,7 @@
 // 압축을 푼 배포 패키지를 실제로 켜서 확인한다 (GitHub Actions의 Windows에서 실행).
 // 1) 서버가 뜨는지  2) 음성인식 엔진이 올라왔는지  3) 오디오를 넣으면 엔진이 처리하는지
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,6 +23,12 @@ if (pkg.endsWith('.zip')) {
     process.exit(1);
   }
   pkg = join(dest, 'caption-stream');
+  if (!existsSync(pkg)) {
+    // 풀린 모양을 보여 준다 (Windows 실행 환경이 바뀌어 폴더가 안 생긴 적이 있다)
+    const show = (d, depth) => existsSync(d) ? readdirSync(d).slice(0, 15).map((n) => (depth > 0 && existsSync(join(d, n)) && statSync(join(d, n)).isDirectory() ? `${n}/[${show(join(d, n), depth - 1)}]` : n)).join(', ') : '(없음)';
+    annotate('unzip', `압축을 풀었지만 caption-stream 폴더가 없습니다. 풀린 내용: ${show(dest, 2)} | 명령 출력: ${r.stdout}${r.stderr}`);
+    process.exit(1);
+  }
 }
 const app = join(pkg, 'app');
 const listing = existsSync(pkg) ? `${readdirSync(pkg).join(', ')} | app: ${existsSync(app) ? readdirSync(app).join(', ') : '(없음)'}` : '(패키지 폴더 없음)';
