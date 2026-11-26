@@ -16,13 +16,21 @@ const STANDALONE = new Set(['그', '이', '저', '수', '것', '거', '및', '�
   '본', '된', '난', '낼', '쓴', '온', '준', '걸', '줘', '써', '봐', '펴', '삶', '피', '바', '창', '너', '떠', '먼', '백', '앱', '순', '법',
   '집', '물', '돈', '길', '손', '눈', '몸', '꿈', '빛', '산', '강', '땅', '밥', '책', '문', '방', '옷', '표', '값', '힘', '맛', '곳', '팔', '발', '목', '귀', '입', '코', '배', '해', '달', '별', '불', '술', '차', '뜻', '글', '꽃', '잠', '키', '역', '반', '편', '쪽', '줄', '큰', '긴', '센', '옛', '온', '헌', '딴', '웬', '왠', '뭔', '첫']);
 const HANGUL = /^[가-힣]+$/;
+/** 조사가 붙지 않는 한 글자 꾸밈말: 뒤에 떨어진 조각은 이 말이 아니라 뒷말에 붙인다 ("좀 고 생하셨을" → "좀 고생하셨을") */
+const NO_PARTICLE = new Set(['좀', '잘', '꼭', '왜', '안', '못', '막', '꽤', '참', '늘', '곧', '즉', '딱', '쭉', '훨', '확']);
+/** 숫자 뒤에 붙여 쓰는 단위 ("10 시에" → "10시에") */
+const UNIT = /^(시간|시|분|초|개월|개|명|번|년|월|일|주|층|원|살|회|등|위|점|도|퍼센트|프로|km|kg|cm|mm|m|g)(?![가-힣]{2,}$)/;
 /** '-ㄴ/-ㄹ' 꾸밈 끝 ("하신", "본", "할"): 뒤의 '적'·'데'·'지'는 따로 쓰는 말 ("본 적", "갈 데") */
 const MODIFIER_END = /(신|은|는|던|든|본|한|된|할|을|볼|갈|올|난|쓴|간|온|준|인)$/;
 const AFTER_MODIFIER = new Set(['적', '데', '지', '줄', '바', '척', '뻔', '게', '만큼', '대로', '듯']);
 const TRAILING_PUNCT = /[.,?!…~]+$/;
 
 export function tidySpacing(text: string): string {
-  const words = text.split(' ').filter(Boolean);
+  // 한글 낱말에 숫자가 붙어 나온 경우 떼기: "저희2분" → "저희 2분" ('제1회', '4월1일', '5만3천'처럼 숫자 사이의 한글은 그대로)
+  const words = text
+    .replace(/(^|\s)([가-힣]{2,})(?=\d)/g, '$1$2 ')
+    .split(' ')
+    .filter(Boolean);
   const out: string[] = [];
   for (let i = 0; i < words.length; i++) {
     const cur = words[i]!;
@@ -30,7 +38,12 @@ export function tidySpacing(text: string): string {
     const prev = out[out.length - 1];
     const n = [...core].length;
     const isSuffix = (n === 1 && SUFFIX.has(core) && !STANDALONE.has(core)) || MULTI_SUFFIX.has(core);
-    if (prev !== undefined && /[가-힣]$/.test(prev) && HANGUL.test(core) && isSuffix && !(AFTER_MODIFIER.has(core) && MODIFIER_END.test(prev))) {
+    // 숫자 + 단위: "10 시에" → "10시에"
+    if (prev !== undefined && /\d$/.test(prev) && UNIT.test(cur)) {
+      out[out.length - 1] = prev + cur;
+      continue;
+    }
+    if (prev !== undefined && /[가-힣]$/.test(prev) && !NO_PARTICLE.has(prev) && HANGUL.test(core) && isSuffix && !(AFTER_MODIFIER.has(core) && MODIFIER_END.test(prev))) {
       out[out.length - 1] = prev + cur; // 조사·어미 → 앞말
       continue;
     }
