@@ -6,6 +6,8 @@
  * 결과: 한 글자 어절 28% → 8%. 띄어쓰기가 맞는 문장(갤럭시 변환 312어절)은 거의 바꾸지 않는다.
  * 폰·브라우저 음성인식 결과는 띄어쓰기가 맞으므로 쓰지 않는다.
  */
+import { COMMON_NOUNS, NOUNS, PARTICLES, VERB_NOUNS } from './koLexicon';
+
 const SUFFIX = new Set(['을', '를', '은', '는', '이', '가', '에', '의', '와', '과', '로', '도', '만', '께', '요', '죠', '고', '며', '면', '서', '지', '게', '다', '데', '니', '듯', '든', '나', '랑', '적', '들', '님', '씩', '째', '쯤', '용', '상', '간', '장', '성', '화', '자', '점', '권', '부', '팀', '실', '과', '측', '량', '률', '형', '식', '법']);
 const MULTI_SUFFIX = new Set(['에서', '으로', '에게', '한테', '처럼', '까지', '부터', '이랑', '어요', '아요', '어서', '아서', '었다', '았다', '습니다', '니다', '으며', '리며', '리고', '으면', '거나', '는데', '지만', '도록', '이다', '입니다', '이라고', '라고', '에는', '에도', '으로는', '에만', '에서는', '이라는', '라는', '에요', '예요', '이에요', '인데', '이고', '이며', '로서', '으로서']);
 /** 혼자 쓰는 한 글자 낱말 (붙이지 않음) */
@@ -16,6 +18,44 @@ const STANDALONE = new Set(['그', '이', '저', '수', '것', '거', '및', '�
   '본', '된', '난', '낼', '쓴', '온', '준', '걸', '줘', '써', '봐', '펴', '삶', '피', '바', '창', '너', '떠', '먼', '백', '앱', '순', '법',
   '집', '물', '돈', '길', '손', '눈', '몸', '꿈', '빛', '산', '강', '땅', '밥', '책', '문', '방', '옷', '표', '값', '힘', '맛', '곳', '팔', '발', '목', '귀', '입', '코', '배', '해', '달', '별', '불', '술', '차', '뜻', '글', '꽃', '잠', '키', '역', '반', '편', '쪽', '줄', '큰', '긴', '센', '옛', '온', '헌', '딴', '웬', '왠', '뭔', '첫']);
 const HANGUL = /^[가-힣]+$/;
+/** 뒷말을 꾸미는 한 글자·말 ("이 상을", "한 국가"): 명사 사전으로 뒷말과 붙이지 않는다 */
+const DETERMINER = new Set(['이', '그', '저', '한', '두', '세', '네', '몇', '각', '새', '첫', '온', '헌', '딴', '웬', '약', '총', '매', '이런', '그런', '저런', '어떤', '무슨', '모든', '여러']);
+/** 명사 뒤 '이다' 꼴 (조사 목록에 없는 것) */
+const COPULA = ['입니다', '이에요', '예요', '이다', '이야', '인데', '이고', '이며', '이라고', '라고', '이라는', '라는', '인', '다', '요', '죠'];
+/** 명사 뒤에 붙는 '-하다/-되다' 꼴 ("변화 된" → "변화된", "관리 해야" → "관리해야") */
+const VERB_AFTER_NOUN = /^(하[가-힣]|되[가-힣]?|돼|해|했|됐|된|될|함|됨|합|됩|한[가-힣]|할[가-힣])/;
+
+/** 조사·'이다' 꼬리인지: 조사 하나, '이다' 꼴 하나, 또는 조사 + 는·도·만·은 ("의", "에서는", "이에요"; 빈 꼬리도 참) */
+function particleTail(t: string): boolean {
+  if (!t || PARTICLES.has(t) || COPULA.includes(t)) return true;
+  const last = t.slice(-1);
+  return '는도만은'.includes(last) && PARTICLES.has(t.slice(0, -1));
+}
+
+/** 어떤 명사로 시작하는지 ("해결책" → 해결) */
+const startsWithNoun = (w: string) => [2, 3, 4].some((k) => k <= w.length && NOUNS.has(w.slice(0, k)));
+
+/**
+ * 명사 사전으로 앞 조각을 뒷말에 붙일지: 앞 조각 + 뒷말 앞 1~2글자가 사전의 명사이고 뒷말의 나머지가 조사뿐이면 붙인다
+ * ("바 다의" → "바다의", "시 간이" → "시간이", "의 미로" → "의미로"). 조사가 없으면 '바·자·시'처럼 혼자 쓰는 말은 그대로.
+ */
+function nounJoin(cur: string, next: string | undefined): string | null {
+  // 앞 조각이 이미 명사면 합성어를 만들지 않는다 ("아침 식사" 그대로). 두 글자는 명사가 아닐 때만 ("커리 어를")
+  if (!next || !HANGUL.test(cur) || [...cur].length > 2 || DETERMINER.has(cur) || NO_PARTICLE.has(cur) || NOUNS.has(cur)) return null;
+  const nc = next.replace(TRAILING_PUNCT, '');
+  if (!HANGUL.test(nc)) return null;
+  for (const k of [2, 1]) {
+    if (k > nc.length) continue;
+    const noun = cur + nc.slice(0, k);
+    if (noun.length < 2 || !NOUNS.has(noun)) continue;
+    const tail = nc.slice(k);
+    // 혼자 쓰는 한 글자('바·자·개')는 조사가 붙고 아주 흔한 명사가 될 때만 ("바 다의" → "바다의", "열 개 정도"는 그대로)
+    if (STANDALONE.has(cur) && (!tail || !COMMON_NOUNS.has(noun))) continue;
+    // 조사뿐인 꼬리, 또는 '-하다/-되다'로 대개 쓰는 명사 뒤의 '하다' 꼴 ("중 요한" → "중요한", "성 장할" → "성장할")
+    if (particleTail(tail) || (VERB_NOUNS.has(noun) && VERB_AFTER_NOUN.test(tail))) return cur + next;
+  }
+  return null;
+}
 /** 조사가 붙지 않는 한 글자 꾸밈말: 뒤에 떨어진 조각은 이 말이 아니라 뒷말에 붙인다 ("좀 고 생하셨을" → "좀 고생하셨을") */
 const NO_PARTICLE = new Set(['좀', '잘', '꼭', '왜', '안', '못', '막', '꽤', '참', '늘', '곧', '즉', '딱', '쭉', '훨', '확']);
 /** 숫자 뒤에 붙여 쓰는 단위 ("10 시에" → "10시에") */
@@ -41,6 +81,17 @@ export function tidySpacing(text: string): string {
     // 숫자 + 단위: "10 시에" → "10시에"
     if (prev !== undefined && /\d$/.test(prev) && UNIT.test(cur)) {
       out[out.length - 1] = prev + cur;
+      continue;
+    }
+    // 명사 + 하다/되다: "변화 된" → "변화된". 말뭉치에서 대개 붙여 쓴 명사만 (뒷말이 명사면 그대로: "문제 해결")
+    if (prev !== undefined && VERB_NOUNS.has(prev) && HANGUL.test(core) && VERB_AFTER_NOUN.test(core) && !startsWithNoun(core) && !core.startsWith('하나')) {
+      out[out.length - 1] = prev + cur;
+      continue;
+    }
+    // 명사 사전: "바 다의" → "바다의", "의 미로" → "의미로" (조사로 앞말에 붙이기보다 먼저)
+    const joined = prev !== undefined && /\d$/.test(prev) ? null : nounJoin(cur, words[i + 1]);
+    if (joined) {
+      words[i + 1] = joined;
       continue;
     }
     if (prev !== undefined && /[가-힣]$/.test(prev) && !NO_PARTICLE.has(prev) && HANGUL.test(core) && isSuffix && !(AFTER_MODIFIER.has(core) && MODIFIER_END.test(prev))) {
