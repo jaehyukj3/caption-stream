@@ -327,6 +327,7 @@ onBeforeUnmount(() => {
 }
 .viewers {
   font-weight: 700;
+  white-space: nowrap;
 }
 .spacer {
   flex: 1;
@@ -408,7 +409,8 @@ onBeforeUnmount(() => {
 }
 @media (max-width: 900px) {
   .console {
-    grid-template-columns: 1fr;
+    /* 1fr은 안의 가장 넓은 요소(긴 주소·선택 상자)만큼 커져 화면 밖으로 나간다 → 0까지 줄어들게 */
+    grid-template-columns: minmax(0, 1fr);
     height: auto;
   }
   .stage {

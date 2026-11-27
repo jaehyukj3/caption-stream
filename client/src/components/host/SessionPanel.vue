@@ -244,7 +244,9 @@ async function copy() {
   font-size: 13px;
 }
 .code {
-  font-size: 34px;
+  /* 좁은 폰에서도 방 코드가 두 줄로 갈라지지 않게 */
+  white-space: nowrap;
+  font-size: clamp(24px, 8vw, 34px);
   font-weight: 800;
   letter-spacing: 0.06em;
   font-variant-numeric: tabular-nums;
